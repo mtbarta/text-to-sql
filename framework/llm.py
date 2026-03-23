@@ -52,13 +52,13 @@ class OpenRouterConfig:
     Defaults to gpt-oss-120b on Cerebras provider.
     """
 
-    model: str = "openai/gpt-oss-120b"
+    model: str = "openai/gpt-oss-120b:nitro"
     api_key: str = ""
     max_tokens: int = 100000
     temperature: float = 0.6
     max_iterations: int = 30
-    # Provider routing - defaults to Cerebras for speed
-    provider: dict[str, Any] = field(default_factory=lambda: {"only": ["cerebras"]})
+    # Provider routing - no restriction by default
+    provider: dict[str, Any] = field(default_factory=dict)
     # Reasoning configuration
     reasoning: dict[str, Any] | None = None
     # Timeout for receiving first token (also applies between subsequent chunks)
