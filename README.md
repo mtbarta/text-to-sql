@@ -111,11 +111,22 @@ This will run the agent against the evaluation dataset and report the results.
 
 ## Goal
 
-Your goal is to make whatever changes necessary (outside of outright reward hacking the
-evaluation script) to get as many of the HARD questions correct as possible.
+Your goal is to get as many of the HARD questions correct as possible by improving the
+agent and the codebase. Change whatever helps, but do not alter the evaluation script to
+inflate your score.
 
-This might take a number of forms!
-Tweaking parameters, adding more tools, prompt engineering, context manipulation, training custom models (ok, probably not this one)...
+That might mean tweaking parameters, adding tools, prompt engineering, context
+manipulation, or—less realistically, given the timebox—training custom models.
+
+We are looking for a system that is _generally capable_: it should tolerate _arbitrary_
+warehouses and _arbitrary_ guidance, not only this database and these markdown files.
+Overfitting here misses the point. Do not edit the bundled guide files; in a real setup
+you do not control that content, and the agent should handle unfamiliar or shifting rules
+without rewriting the customer's guidance.
+
+Likewise, avoid a hand-maintained schema map that is tailored only to this warehouse.
+Prefer approaches that discover or infer structure from the database and the docs so the
+same patterns still apply when the schema or documentation changes.
 
 Please let us know what you tried, and how far you got!
 The implementation we've got here is intentionally pretty bare-bones.
