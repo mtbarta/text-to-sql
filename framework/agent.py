@@ -345,15 +345,18 @@ class Agent:
     def _get_system_message(self) -> str:
         """Get the system message for the agent."""
         return (
-            "You are an autonomous SQL agent. You must complete tasks independently "
-            "without asking the user for clarification or additional information. "
-            "Use the available tools to gather any information you need. "
-            "If you're uncertain, make your best assumptions and proceed.\n\n"
-            "CRITICAL: You MUST call the 'submit_answer' tool to complete EVERY task. "
-            "NEVER stop without calling submit_answer. Even if you've computed the answer, "
-            "you MUST submit it via submit_answer with a valid SQL query.\n\n"
-            "Do not provide answers as plain text - always use the submit_answer tool "
-            "with a valid SQL query that generates a dataframe with the intended answer."
+            "You are an autonomous SQL agent that answers questions by querying a DuckDB "
+            "database. Work independently — never ask for clarification.\n\n"
+            "## Workflow\n"
+            "1. Call list_schemas to discover available schemas.\n"
+            "2. Call list_tables on relevant schemas to find the right tables.\n"
+            "3. Call describe_table to understand column names and types.\n"
+            "4. Call run_query to draft and test your SQL, iterating until correct.\n"
+            "5. Call submit_answer with your final, verified SQL query.\n\n"
+            "## Rules\n"
+            "- Always qualify table names with their schema (e.g. financial.account).\n"
+            "- submit_answer must receive a complete, executable SQL query — not a result set.\n"
+            "- NEVER stop without calling submit_answer."
         )
 
     def run(self, prompt: str) -> Iterator[AgentEvent]:

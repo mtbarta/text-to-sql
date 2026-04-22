@@ -49,6 +49,7 @@ from evaluation.compare import loosely_compare_dataframes
 from framework.agent import ANSWER_SUBMITTED_PREFIX, Agent, AgentEvent, EventType, Tool
 from framework.database import execute_query
 from framework.llm import OpenRouterConfig, TokenUsage
+from tools.database_tools import DESCRIBE_TABLE, LIST_SCHEMAS, LIST_TABLES, RUN_QUERY
 from tools.submit_answer import SUBMIT_ANSWER
 
 # =============================================================================
@@ -144,9 +145,11 @@ def create_tools() -> dict[str, Tool]:
         A dictionary mapping tool names to Tool objects.
     """
     return {
+        LIST_SCHEMAS.name: LIST_SCHEMAS,
+        LIST_TABLES.name: LIST_TABLES,
+        DESCRIBE_TABLE.name: DESCRIBE_TABLE,
+        RUN_QUERY.name: RUN_QUERY,
         SUBMIT_ANSWER.name: SUBMIT_ANSWER,
-        # Add your custom tools here:
-        # MY_TOOL.name: MY_TOOL,
     }
 
 

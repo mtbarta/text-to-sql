@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["framework", "evaluation", "tools"]
+packages = ["framework", "evaluation", "tools", "retrieval"]
 
 [project]
 name = "hecks-takehome"
@@ -28,6 +28,8 @@ dependencies = [
 [project.scripts]
 evaluate = "evaluation.evaluate:main"
 interactive = "interactive:main"
+analyze = "evaluation.analyze:main"
+build-index = "retrieval.build_index:main"
 
 [tool.ty.environment]
 python-version = "3.13"
