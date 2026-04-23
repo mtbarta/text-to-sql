@@ -385,7 +385,8 @@ class Agent:
             "unless the question explicitly asks for human-readable labels.\n"
             "- When grouping by a name column (e.g. district_name), always also include the "
             "corresponding ID column in GROUP BY to avoid incorrect aggregation.\n"
-            "- Return exactly the columns the question requests — no extras."
+            "- Return exactly the columns the question requests — no extras.\n"
+            '- Validate that your SQL query respects all the rules and requirements before submitting.'
         )
 
     def run(self, prompt: str) -> Iterator[AgentEvent]:
