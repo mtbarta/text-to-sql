@@ -87,6 +87,7 @@ def execute_query(query: str) -> QueryExecutionResult:
         ... else:
         ...     print(f"Error: {result.error_message}")
     """
+    conn = None
     try:
         conn = duckdb.connect(str(DATABASE_PATH), read_only=True)
         result = conn.execute(query)
@@ -97,7 +98,8 @@ def execute_query(query: str) -> QueryExecutionResult:
     except Exception as e:
         return QueryExecutionResult(dataframe=None, error_message=str(e))
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 
 # Helper functions for listing schemas and tables
@@ -109,6 +111,7 @@ def list_schemas() -> list[str]:
     Returns:
         Sorted list of schema names.
     """
+    conn = None
     try:
         conn = duckdb.connect(str(DATABASE_PATH), read_only=True)
         result = conn.execute("""
@@ -121,7 +124,8 @@ def list_schemas() -> list[str]:
     except Exception:
         return []
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 
 def list_tables(schema_name: str) -> list[str] | None:
@@ -133,6 +137,7 @@ def list_tables(schema_name: str) -> list[str] | None:
     Returns:
         List of table names, or None if schema not found.
     """
+    conn = None
     try:
         conn = duckdb.connect(str(DATABASE_PATH), read_only=True)
         result = conn.execute(
@@ -148,7 +153,8 @@ def list_tables(schema_name: str) -> list[str] | None:
     except Exception:
         return []
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 def describe_table(schema_name: str, table_name: str) -> list[str]:
     """Describe a table's columns with their types.
@@ -160,6 +166,7 @@ def describe_table(schema_name: str, table_name: str) -> list[str]:
     Returns:
         List of column descriptions in "name (TYPE)" format, or empty list if not found.
     """
+    conn = None
     try:
         conn = duckdb.connect(str(DATABASE_PATH), read_only=True)
         # Use information_schema for reliable column lookup
@@ -182,4 +189,5 @@ def describe_table(schema_name: str, table_name: str) -> list[str]:
     except Exception:
         return []
     finally:
-        conn.close()
+        if conn:
+            conn.close()

@@ -23,8 +23,22 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+import httpx
 from rich.console import Console
 from rich.table import Table
+
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+FAILURE_CATEGORIES = [
+    "wrong_schema",      # queried the wrong schema or table
+    "null_handling",     # spurious IS NULL guards or wrong NULL semantics
+    "wrong_groupby",     # wrong GROUP BY keys
+    "wrong_column",      # wrong column names or aliases in SELECT
+    "wrong_filter",      # missing or incorrect WHERE conditions
+    "wrong_aggregation", # wrong aggregation function or scope
+    "over_engineering",  # unnecessary CTEs/subqueries introducing semantic differences
+    "other",
+]
 
 # =============================================================================
 # Data model
@@ -240,6 +254,72 @@ class RuleBasedAnalyzer:
 
 
 # =============================================================================
+# LLM judge analyzer
+# =============================================================================
+
+
+class LLMJudgeAnalyzer:
+    """Wraps RuleBasedAnalyzer and adds LLM-based failure categorization for MISMATCHes.
+
+    Uses a fast model via OpenRouter to classify why the submitted SQL
+    produced different results than the gold query. Only makes API calls for
+    MISMATCH failures that have a submitted query.
+    """
+
+    def __init__(self, api_key: str, model: str = "openai/gpt-4.1-mini") -> None:
+        self._base = RuleBasedAnalyzer()
+        self._api_key = api_key
+        self._model = model
+        self._client = httpx.Client(
+            timeout=30.0,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+
+    def analyze(self, trace: TraceRecord) -> TraceAnalysis:
+        analysis = self._base.analyze(trace)
+        if trace.failure_type == "MISMATCH" and trace.submitted_query:
+            verdict = self._judge(trace)
+            analysis.annotations["llm_category"] = verdict["category"]
+            analysis.annotations["llm_reason"] = verdict["reason"]
+        return analysis
+
+    def _judge(self, trace: TraceRecord) -> dict[str, str]:
+        categories_list = "\n".join(f"- {c}" for c in FAILURE_CATEGORIES)
+        prompt = (
+            f"A SQL agent was given this question:\n{trace.prompt}\n\n"
+            f"The correct (gold) SQL query was:\n{trace.gold_query}\n\n"
+            f"The agent submitted this SQL query:\n{trace.submitted_query}\n\n"
+            "The submitted query produced different results than the gold query.\n"
+            "Categorize the PRIMARY reason for the mismatch. Choose exactly one:\n"
+            f"{categories_list}\n\n"
+            'Respond with JSON only: {"category": "<category>", "reason": "<one sentence>"}'
+        )
+        try:
+            response = self._client.post(
+                OPENROUTER_API_URL,
+                json={
+                    "model": self._model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 150,
+                    "temperature": 0.0,
+                },
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"].strip()
+            if content.startswith("```"):
+                content = content.split("\n", 1)[1].rsplit("```", 1)[0]
+            result = json.loads(content)
+            if result.get("category") not in FAILURE_CATEGORIES:
+                result["category"] = "other"
+            return result
+        except Exception as e:
+            return {"category": "other", "reason": f"Judge error: {e}"}
+
+
+# =============================================================================
 # Report rendering
 # =============================================================================
 
@@ -309,6 +389,27 @@ def render_report(
         console.print(insight_table)
         console.print()
 
+    # ── LLM judge category distribution (when available) ─────────────────────
+    judged = [a for a in failures if "llm_category" in a.annotations]
+    if judged:
+        category_counts: Counter[str] = Counter(
+            a.annotations["llm_category"] for a in judged
+        )
+        judge_table = Table(
+            title=f"LLM Judge Category Distribution ({len(judged)} MISMATCH cases)",
+            show_header=True,
+            header_style="bold",
+            show_lines=False,
+        )
+        judge_table.add_column("Category", style="cyan")
+        judge_table.add_column("Count", justify="right")
+        judge_table.add_column("% of judged", justify="right")
+        for cat, count in category_counts.most_common():
+            pct = count / len(judged) * 100
+            judge_table.add_row(cat, str(count), f"{pct:.0f}%")
+        console.print(judge_table)
+        console.print()
+
     # ── Per-failure details grouped by type ───────────────────────────────────
     by_type: dict[str, list[TraceAnalysis]] = {}
     for a in failures:
@@ -363,7 +464,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Analyze agent evaluation traces.\n\n"
-            "Point at a directory produced by: uv run evaluate --verbose ..."
+            "Point at a directory produced by: uv run evaluate --verbose ...\n\n"
+            "Examples:\n"
+            "  uv run analyze logs/run_20260420_123456/\n"
+            "  uv run analyze logs/run_20260420_123456/ --show-queries\n"
+            "  uv run analyze logs/run_20260420_123456/ --llm-judge --api-key KEY"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -376,6 +481,27 @@ def parse_args() -> argparse.Namespace:
         "--show-queries",
         action="store_true",
         help="Include submitted and gold queries in per-failure details.",
+    )
+    parser.add_argument(
+        "--llm-judge",
+        action="store_true",
+        help="Use an LLM to categorize MISMATCH failures (requires --api-key).",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="OpenRouter API key (required when --llm-judge is set).",
+    )
+    parser.add_argument(
+        "--judge-model",
+        default="openai/gpt-4.1-mini",
+        help="Model to use for LLM judging (default: openai/gpt-4.1-mini).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("experiment_analysis"),
+        help="Directory to save the analysis report (default: experiment_analysis/).",
     )
     return parser.parse_args()
 
@@ -407,10 +533,36 @@ def main() -> None:
         console.print("[yellow]No valid traces to analyze.[/yellow]")
         return
 
-    analyzer = RuleBasedAnalyzer()
+    if args.llm_judge:
+        if not args.api_key:
+            console.print("[red]--api-key is required when --llm-judge is set.[/red]")
+            raise SystemExit(1)
+        analyzer: Analyzer = LLMJudgeAnalyzer(
+            api_key=args.api_key,
+            model=args.judge_model,
+        )
+        console.print(
+            f"[dim]LLM judge enabled (model: {args.judge_model})[/dim]"
+        )
+    else:
+        analyzer = RuleBasedAnalyzer()
+
     analyses = [analyzer.analyze(t) for t in traces]
 
     render_report(analyses, console, show_queries=args.show_queries)
+
+    # Derive the run name: if log_dir is a split subdir (e.g. .../run_XYZ/evals_easy),
+    # name the file after the run directory; otherwise use log_dir itself.
+    parent = log_dir.parent
+    run_name = parent.name if parent.name.startswith("run_") else log_dir.name
+
+    output_dir: Path = args.output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / run_name
+    with open(output_path, "w") as f:
+        file_console = Console(file=f, no_color=True, highlight=False, width=100)
+        render_report(analyses, file_console, show_queries=True)
+    console.print(f"[dim]Report saved to: {output_path}[/dim]")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,313 @@
+
+───────────────────────────────────── Failure Analysis Report ──────────────────────────────────────
+  Total: 64  Passed: 47  Failed: 17  Pass rate: 73.4%
+
+        Failure Type Distribution        
+┏━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━┓
+┃ Failure Type  ┃ Count ┃ % of failures ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━┩
+│ MISMATCH      │    12 │           71% │
+│ NO_SUBMISSION │     3 │           18% │
+│ AGENT_ERROR   │     2 │           12% │
+└───────────────┴───────┴───────────────┘
+
+         Behavioral Insights (failures only)         
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━┓
+┃ Insight Code              ┃ Count ┃ % of failures ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━┩
+│ single_query_no_iteration │     9 │           53% │
+└───────────────────────────┴───────┴───────────────┘
+
+────────────────────────────────────── AGENT_ERROR  (2 cases) ──────────────────────────────────────
+
+  1. Find the top 50 countries by population density (population per square km), only for countries 
+with population greater t…
+     iter=30  dur=28.6s  tools: list_schemas → list_tables → describe_table → list_tables → 
+describe_table → run_query → run_query → run_query → run_query → run_query → run_query → run_query →
+run_query → run_query → run_query → run_query → run_query → run_query → run_query → run_query → 
+run_query → run_query → run_query → run_query → run_query → run_query → run_query → run_query → 
+run_query
+     error: Agent error: Max iterations reached
+     submitted: (none)
+     gold:      SELECT c.Name, CAST(c.Population AS REAL) / c.SurfaceArea as population_density FROM
+world.Country c WHERE c.Population > 0 AND c.SurfaceArea > 0 ORDER BY population_density DESC LIMIT 
+50
+
+  2. Find countries with small populations (< 100,000) - economic data for these may be unreliable. 
+Exclude countries with po…
+     iter=30  dur=26.0s  tools: list_schemas → list_tables → describe_table → list_tables → 
+describe_table → run_query → run_query → run_query → run_query → run_query → run_query → run_query →
+run_query → run_query → run_query → run_query → run_query → run_query → run_query → run_query → 
+run_query → run_query → run_query → run_query → run_query → run_query → run_query → run_query → 
+run_query → run_query
+     error: Agent error: Max iterations reached
+     submitted: (none)
+     gold:      SELECT c.Name, c.Population, c.GNP FROM world.Country c WHERE c.Population < 100000 
+AND c.Population > 0
+─────────────────────────────────────── MISMATCH  (12 cases) ───────────────────────────────────────
+
+  1. Find the top 50 member-quarters by charge count, using statement_no for period assignment, not 
+charge_dt. Remember to ex…
+     iter=15  dur=13.2s  tools: list_schemas → list_tables → describe_table → describe_table → 
+list_tables → list_tables → list_tables → list_tables → list_tables → list_tables → list_tables → 
+describe_table → describe_table → run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT m.firstname,
+       m.lastname,
+       c.statement_no,
+       COUNT(*) AS charge_count,
+       SUM(c.charge_amt) AS total_charges
+FROM Credit.charge c
+JOIN Credit.member m ON c.member_no = m.member_no
+WHERE c.charge_amt <> 0.01
+  AND (c.charge_code IS NULL OR c.charge_code <> 'RF')
+GROUP BY m
+     gold:      SELECT m.firstname, m.lastname, c.statement_no, COUNT(*) as charge_count, 
+SUM(c.charge_amt) as total_charges FROM Credit.member m JOIN Credit.charge c ON m.member_no = 
+c.member_no WHERE c.charge_amt != 0.01 AND c.charge_code != 'RF' GROUP BY m.member_no, m.firstname, 
+m.lastname, c.statement_no ORDER
+
+  2. Calculate the average transaction value excluding micro-transactions (under $5) and test 
+transactions ($0.01) and refund…
+     iter=18  dur=21.7s  tools: list_schemas → list_tables → describe_table → run_query → run_query 
+→ run_query → run_query → run_query → run_query → run_query → run_query → run_query → run_query → 
+run_query → run_query → run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT AVG(amount) AS average_transaction_value
+FROM financial.trans
+WHERE amount >= 500
+  AND amount <> 1
+  AND (k_symbol IS NULL OR k_symbol <> 'RF')
+     gold:      SELECT AVG(charge_amt) as avg_transaction_value FROM Credit.charge WHERE charge_amt 
+>= 5 AND charge_amt != 0.01 AND charge_code != 'RF'
+
+  3. Calculate win rates for White players (with at least 5 games), excluding any games where the 
+opening name contains 'Fren…
+     iter=5  dur=6.4s  tools: list_schemas → list_tables → describe_table → run_query → 
+submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT white AS player,
+       COUNT(*) AS total_games,
+       SUM(CASE WHEN game_result = '1-0' THEN 1 ELSE 0 END)::DOUBLE / COUNT(*) AS win_rate
+FROM Chess.game
+WHERE opening NOT ILIKE '%French%'
+  AND opening NOT ILIKE '%Sicilian%'
+GROUP BY white
+HAVING COUNT(*) >= 5
+ORDER BY win_rate DESC
+LIMIT 
+     gold:      SELECT g.white as player, CAST(SUM(CASE WHEN g.game_result = '1-0' THEN 1 ELSE 0 
+END) AS REAL) / COUNT(*) as win_rate FROM Chess.game g JOIN Chess.opening o ON g.opening_id = 
+o.opening_id WHERE o.name NOT LIKE '%French%' AND o.name NOT LIKE '%Sicilian%' GROUP BY g.white 
+HAVING COUNT(*) >= 5 ORDER BY
+
+  4. What are the top three openings by games played, excluding ALL games where the opening name 
+contains 'French' or 'Sicili…
+     iter=6  dur=6.4s  tools: list_schemas → list_tables → describe_table → run_query → 
+submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT opening_id, opening, COUNT(*) AS game_count
+FROM Chess.game
+WHERE opening NOT ILIKE '%French%' AND opening NOT ILIKE '%Sicilian%'
+GROUP BY opening_id, opening
+ORDER BY game_count DESC
+LIMIT 3;
+     gold:      SELECT o.name as opening_name, COUNT(*) as game_count FROM Chess.game g JOIN 
+Chess.opening o ON g.opening_id = o.opening_id WHERE o.name NOT LIKE '%French%' AND o.name NOT LIKE 
+'%Sicilian%' GROUP BY o.opening_id, o.name ORDER BY game_count DESC LIMIT 3
+
+  5. Analyze completed (non-null dep/arr times) flights by day of week for January 2016, excluding 
+cancelled flights. Give to…
+     iter=5  dur=8.7s  tools: list_schemas → list_tables → describe_table → run_query → 
+submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT CASE DayOfWeek
+         WHEN 1 THEN 'Monday'
+         WHEN 2 THEN 'Tuesday'
+         WHEN 3 THEN 'Wednesday'
+         WHEN 4 THEN 'Thursday'
+         WHEN 5 THEN 'Friday'
+         WHEN 6 THEN 'Saturday'
+         WHEN 7 THEN 'Sunday'
+       END AS day_of_week,
+       COUNT(*) AS total_flights,
+     gold:      SELECT DayOfWeek, COUNT(*) as total_flights, SUM(CASE WHEN ArrDelayMinutes <= 15 
+THEN 1 ELSE 0 END) as on_time_flights, AVG(ArrDelayMinutes) as avg_delay FROM 
+Airline.On_Time_On_Time_Performance_2016_1 WHERE DepTime IS NOT NULL AND ArrTime IS NOT NULL AND 
+Cancelled = 0 AND Month = 1 GROUP BY DayOfWe
+
+  6. Find the top 30 F1 drivers (first name and last name) by race completion rate, where position 
+NULL or 0 indicates non-co…
+     iter=7  dur=10.2s  tools: list_schemas → list_tables → describe_table → describe_table → 
+run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: WITH driver_stats AS (
+    SELECT r.driverId,
+           COUNT(*) AS total_races,
+           SUM(CASE WHEN r.position IS NOT NULL AND r.position <> 0 THEN 1 ELSE 0 END) AS 
+completed_races
+    FROM ErgastF1.results r
+    GROUP BY r.driverId
+    HAVING COUNT(*) >= 50
+)
+SELECT d.forename,
+       d.surn
+     gold:      SELECT d.forename, d.surname, COUNT(*) as total_races, SUM(CASE WHEN r.position IS 
+NOT NULL AND r.position > 0 THEN 1 ELSE 0 END) as completed_races, CAST(SUM(CASE WHEN r.position IS 
+NOT NULL AND r.position > 0 THEN 1 ELSE 0 END) AS REAL) / COUNT(*) as completion_rate FROM 
+ErgastF1.results r JOIN Er
+
+  7. Find the top 50 statements by net amount: sum of charges minus sum of refunds. Exclude test 
+transactions ($0.01).
+     iter=16  dur=21.4s  tools: list_schemas → list_tables → describe_table → run_query → run_query 
+→ run_query → run_query → run_query → run_query → run_query → list_tables → run_query → run_query → 
+run_query → run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT account_id,
+       SUM(CASE WHEN operation IN ('VYBER', 'VYBER KARTOU') THEN amount ELSE 0 END) -
+       SUM(CASE WHEN operation = 'VKLAD' THEN amount ELSE 0 END) AS net_amount
+FROM financial.trans
+WHERE amount <> 1 AND operation IS NOT NULL
+GROUP BY account_id
+ORDER BY net_amount DESC
+LIMIT 
+     gold:      SELECT c.statement_no, SUM(CASE WHEN c.charge_code != 'RF' THEN c.charge_amt ELSE 0 
+END) as gross_charges, SUM(CASE WHEN c.charge_code = 'RF' THEN c.charge_amt ELSE 0 END) as refunds, 
+SUM(CASE WHEN c.charge_code != 'RF' THEN c.charge_amt ELSE 0 END) - SUM(CASE WHEN c.charge_code = 
+'RF' THEN c.charge
+
+  8. Find district names (A2) with fewer than 50 accounts that should be aggregated as 'Other' for 
+reporting, as well as thei…
+     iter=7  dur=7.8s  tools: list_schemas → list_tables → describe_table → describe_table → 
+run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: WITH district_counts AS (
+    SELECT d.A2 AS district_name,
+           COUNT(a.account_id) AS account_count
+    FROM financial.account a
+    JOIN financial.district d ON a.district_id = d.district_id
+    GROUP BY d.A2
+)
+SELECT district_name,
+       account_count
+FROM district_counts
+WHERE account_co
+     gold:      SELECT d.A2 as district_name, COUNT(a.account_id) as account_count FROM 
+financial.district d LEFT JOIN financial.account a ON d.district_id = a.district_id GROUP BY 
+d.district_id, d.A2 HAVING COUNT(a.account_id) < 50
+
+  9. Find the top 8 pitchers by WHIP (Walks + Hits / Innings Pitched, lower is better) for seasons 
+with at least 50 innings p…
+     iter=7  dur=9.6s  tools: list_schemas → list_tables → describe_table → describe_table → 
+run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: WITH season_stats AS (
+    SELECT 
+        p.playerID,
+        p.yearID,
+        SUM(p.H) AS H,
+        SUM(p.BB) AS BB,
+        SUM(p.IPouts) AS IPouts
+    FROM lahman_2014.pitching p
+    GROUP BY p.playerID, p.yearID
+    HAVING SUM(p.IPouts) >= 150  -- at least 50 innings (150 outs)
+)
+SELECT 
+    
+     gold:      SELECT p.nameFirst, p.nameLast, pi.yearID, pi.IPouts / 3 as innings_pitched, (pi.BB 
++ pi.H) / (pi.IPouts / 3.0) as WHIP FROM lahman_2014.pitching pi JOIN lahman_2014.players p ON 
+pi.playerID = p.playerID WHERE pi.IPouts >= 150 ORDER BY WHIP ASC LIMIT 8
+
+  10. Find the names and years of the top 50 Hall of Fame players by career hits. Remember, we only 
+care about players who hav…
+     iter=8  dur=13.5s  tools: list_schemas → list_tables → describe_table → describe_table → 
+describe_table → run_query → run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT p.nameFirst || ' ' || p.nameLast AS name,
+       h.yearID AS induction_year
+FROM lahman_2014.batting b
+JOIN lahman_2014.players p ON b.playerID = p.playerID
+JOIN lahman_2014.halloffame h ON p.hofID = h.hofID
+WHERE h.inducted = 'Y' AND h.category = 'Player'
+GROUP BY p.playerID, p.nameFirst, p.
+     gold:      SELECT p.nameFirst, p.nameLast, h.yearID as inducted_year, sum(b.H) as career_hits 
+FROM lahman_2014.halloffame h JOIN lahman_2014.players p ON h.hofID = p.hofID JOIN 
+lahman_2014.batting b ON p.playerID = b.playerID WHERE h.inducted = 'Y' AND h.category = 'Player' 
+GROUP BY p.playerID, p.nameFirst, p.
+
+  11. Identify games with rating mismatches (Elo difference > 400 points) that should be weighted 
+0.5x in opening analysis. As…
+     iter=6  dur=7.6s  tools: list_schemas → list_tables → describe_table → describe_table → 
+run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT g.game_id,
+       o.name AS opening_name,
+       g.whiteElo,
+       g.BlackElo,
+       0.5 AS weight
+FROM Chess.game g
+JOIN Chess.opening o ON g.opening_id = o.opening_id
+WHERE ABS(g.whiteElo - g.BlackElo) > 400
+  AND NOT (LOWER(o.name) LIKE '%french%' OR LOWER(o.name) LIKE '%sicilian%');
+     gold:      SELECT g.game_id, g.white, g.black, g.whiteElo, g.BlackElo, ABS(g.whiteElo - 
+g.BlackElo) as elo_diff, o.name as opening FROM Chess.game g JOIN Chess.opening o ON g.opening_id = 
+o.opening_id WHERE g.whiteElo IS NOT NULL AND g.BlackElo IS NOT NULL AND ABS(g.whiteElo - 
+g.BlackElo) > 400 AND o.name NOT 
+
+  12. Find all origin/destination airport pairs with fewer than 50 completed flights (these are 
+'thin routes'). A completed fl…
+     iter=5  dur=5.3s  tools: list_schemas → list_tables → describe_table → run_query → 
+submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT COUNT(*) AS thin_route_pairs
+FROM (
+  SELECT Origin, Dest, COUNT(*) AS flight_cnt
+  FROM Airline.On_Time_On_Time_Performance_2016_1
+  WHERE Cancelled = 0 AND Diverted = 0
+    AND DepTime IS NOT NULL AND ArrTime IS NOT NULL
+  GROUP BY Origin, Dest
+  HAVING COUNT(*) < 50
+) t;
+     gold:      SELECT COUNT(*) AS thin_route_count FROM (SELECT Origin, Dest FROM 
+Airline.On_Time_On_Time_Performance_2016_1 WHERE DepTime IS NOT NULL AND ArrTime IS NOT NULL GROUP 
+BY Origin, Dest HAVING COUNT(*) < 50) thin_routes
+───────────────────────────────────── NO_SUBMISSION  (3 cases) ─────────────────────────────────────
+
+  1. Find the top 30 drivers by fastest lap time. Any lap time under 60 seconds is a data error and 
+must be excluded (lap tim…
+     iter=6  dur=6.4s  tools: list_schemas → list_tables → describe_table → describe_table → 
+run_query
+     error: No answer submitted (agent did not call submit_answer)
+     submitted: (none)
+     gold:      SELECT d.forename, d.surname, MIN(lt.milliseconds) as fastest_lap_ms FROM 
+ErgastF1.lapTimes lt JOIN ErgastF1.drivers d ON lt.driverId = d.driverId WHERE lt.milliseconds >= 
+60000 GROUP BY d.driverId, d.forename, d.surname ORDER BY fastest_lap_ms ASC LIMIT 30
+
+  2. Find the top 50 Hall of Fame voting results by BBWAA with at least 75% support, showing vote 
+percentages. Give the playe…
+     iter=7  dur=7.5s  tools: list_schemas → list_tables → describe_table → describe_table → 
+run_query → run_query
+     error: No answer submitted (agent did not call submit_answer)
+     submitted: (none)
+     gold:      SELECT p.nameFirst, p.nameLast, h.yearID, CAST(h.votes AS REAL) / h.ballots * 100 as
+vote_percentage FROM lahman_2014.halloffame h JOIN lahman_2014.players p ON h.hofID = p.hofID WHERE 
+h.votedBy = 'BBWAA' AND h.ballots > 0 AND CAST(h.votes AS REAL) / h.ballots >= 0.75 ORDER BY 
+vote_percentage DESC L
+
+  3. Find beers with 'extreme' bitterness (IBU above 100), which should be segmented separately for 
+customer preference analy…
+     iter=6  dur=4.7s  tools: list_schemas → list_tables → describe_table → describe_table → 
+run_query
+     error: No answer submitted (agent did not call submit_answer)
+     submitted: (none)
+     gold:      SELECT b.name as beer_name, b.ibu, b.style, br.name as brewery_name FROM 
+CraftBeer.beers b JOIN CraftBeer.breweries br ON b.brewery_id = br.id WHERE b.ibu > 100

@@ -5,6 +5,7 @@ supporting streaming responses, tool calling, and reasoning token display.
 """
 
 import json
+import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -349,14 +350,38 @@ class Agent:
             "database. Work independently — never ask for clarification.\n\n"
             "## Workflow\n"
             "1. Call list_schemas to discover available schemas.\n"
-            "2. Call list_tables on relevant schemas to find the right tables.\n"
-            "3. Call describe_table to understand column names and types.\n"
-            "4. Call run_query to draft and test your SQL, iterating until correct.\n"
-            "5. Call submit_answer with your final, verified SQL query.\n\n"
+            "2. Call list_tables on relevant schemas to find candidate tables.\n"
+            "3. Call describe_table on each candidate table to confirm exact column names "
+            "and types. The question often refers to specific column names (e.g. "
+            "'charge_amt', 'statement_no', 'whiteElo'). Verify those exact names exist in "
+            "the table you plan to use. If multiple schemas have similar tables, pick the "
+            "one whose columns match the question. If a table's columns are clearly "
+            "irrelevant to the question (e.g. you need population data but the table has "
+            "'Indicator Name' columns), stop querying it and try a different table.\n"
+            "4. Call run_query to test your SQL. After getting results, inspect them: "
+            "check that the column names, row count, and sample values are consistent with "
+            "what the question asks for. Do not submit in the same step as the first "
+            "query — always verify results first.\n"
+            "5. Before calling submit_answer, re-read the original question and confirm:\n"
+            "   - Your SELECT columns match exactly what the question asks for (names, count).\n"
+            "   - Your GROUP BY includes all necessary key columns, not just display names.\n"
+            "   - Your WHERE filters apply only conditions explicitly stated in the question.\n"
+            "   - The result row count is plausible (e.g. TOP 50 → 50 rows).\n"
+            "6. Call submit_answer with your final, verified SQL query.\n\n"
             "## Rules\n"
             "- Always qualify table names with their schema (e.g. financial.account).\n"
             "- submit_answer must receive a complete, executable SQL query — not a result set.\n"
-            "- NEVER stop without calling submit_answer."
+            "- NEVER output SQL as text and stop. You MUST call submit_answer.\n"
+            "- Do NOT add 'IS NULL OR col <> value' guards unless the question explicitly "
+            "requires special NULL handling. Use plain equality/inequality (col != value).\n"
+            "- Do NOT add CASE labels or string transformations to numeric or coded columns "
+            "unless the question explicitly asks for human-readable labels.\n"
+            "- Do NOT add filters that aren't mentioned in the question. For example, don't "
+            "add Cancelled=0 or Year=X unless the question explicitly asks to exclude "
+            "cancelled rows or filter by year.\n"
+            "- When grouping by a name column (e.g. district_name), always also include the "
+            "corresponding ID column in GROUP BY to avoid incorrect aggregation.\n"
+            "- Return exactly the columns the question requests — no extras."
         )
 
     def run(self, prompt: str) -> Iterator[AgentEvent]:
@@ -391,12 +416,21 @@ class Agent:
 
                 # Check if response looks like a malformed tool call (JSON with "query" key)
                 # This happens when the model outputs tool call arguments as plain text
-                looks_like_failed_tool_call = (full_response and "{" in full_response)
+                looks_like_failed_tool_call = bool(full_response and "{" in full_response)
 
-                if is_empty_response or looks_like_failed_tool_call:
-                    # Model returned empty response or malformed tool call
-                    # Inject a continuation prompt to remind it to properly call submit_answer
-                    if looks_like_failed_tool_call:
+                # Check if the model output SQL as prose instead of calling submit_answer
+                _SQL_RE = re.compile(r"\bSELECT\b", re.IGNORECASE)
+                looks_like_sql_response = bool(
+                    full_response and _SQL_RE.search(full_response)
+                )
+
+                if is_empty_response or looks_like_failed_tool_call or looks_like_sql_response:
+                    # Model returned empty response, malformed tool call, or SQL as text —
+                    # inject a continuation prompt to force a proper submit_answer call
+                    if looks_like_sql_response:
+                        print("\n[DEBUG] Response contains SQL text without tool call "
+                              "- injecting continuation prompt")
+                    elif looks_like_failed_tool_call:
                         print("\n[DEBUG] Response looks like failed tool call "
                               "- injecting continuation prompt")
                     else:
