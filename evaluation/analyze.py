@@ -429,7 +429,7 @@ def _render_failure(
     show_queries: bool,
 ) -> None:
     trace = analysis.trace
-    prompt = trace.prompt[:120] + "…" if len(trace.prompt) > 120 else trace.prompt
+    prompt = trace.prompt
     duration = f"{trace.duration_seconds:.1f}s" if trace.duration_seconds else "?"
     tool_chain = " → ".join(analysis.tool_sequence) if analysis.tool_sequence else "none"
 
@@ -447,8 +447,8 @@ def _render_failure(
 
     if show_queries:
         submitted = trace.submitted_query or "(none)"
-        console.print(f"     [cyan]submitted:[/cyan] {submitted[:300]}")
-        console.print(f"     [green]gold:     [/green] {trace.gold_query[:300]}")
+        console.print(f"     [cyan]submitted:[/cyan] {submitted}")
+        console.print(f"     [green]gold:     [/green] {trace.gold_query}")
 
     # Render any extra annotations (e.g. from an LLM judge)
     for key, value in analysis.annotations.items():
