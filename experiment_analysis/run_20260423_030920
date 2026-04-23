@@ -1,0 +1,773 @@
+
+───────────────────────────────────── Failure Analysis Report ──────────────────────────────────────
+  Total: 64  Passed: 27  Failed: 37  Pass rate: 42.2%
+
+       Failure Type Distribution        
+┏━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━┓
+┃ Failure Type ┃ Count ┃ % of failures ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━┩
+│ MISMATCH     │    35 │           95% │
+│ AGENT_ERROR  │     2 │            5% │
+└──────────────┴───────┴───────────────┘
+
+         Behavioral Insights (failures only)         
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━┓
+┃ Insight Code              ┃ Count ┃ % of failures ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━┩
+│ single_query_no_iteration │    15 │           41% │
+│ no_query_testing          │     5 │           14% │
+└───────────────────────────┴───────┴───────────────┘
+
+    LLM Judge Category Distribution (35    
+              MISMATCH cases)              
+┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Category          ┃ Count ┃ % of judged ┃
+┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━┩
+│ wrong_filter      │    17 │         49% │
+│ wrong_groupby     │     5 │         14% │
+│ wrong_aggregation │     5 │         14% │
+│ wrong_column      │     5 │         14% │
+│ other             │     1 │          3% │
+│ null_handling     │     1 │          3% │
+│ over_engineering  │     1 │          3% │
+└───────────────────┴───────┴─────────────┘
+
+────────────────────────────────────── AGENT_ERROR  (2 cases) ──────────────────────────────────────
+
+  1. Find the top 50 countries by population density. Show names and densities.
+     iter=30  dur=26.3s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → run_query → run_query → run_query → run_query → run_query → run_query → run_query →
+run_query → run_query → run_query → run_query → run_query → run_query → run_query → run_query → 
+run_query → run_query → run_query → run_query → run_query → describe_table → list_tables → 
+describe_table → run_query
+     error: Agent error: Max iterations reached
+     submitted: (none)
+     gold:      SELECT c.Name, CAST(c.Population AS REAL) / c.SurfaceArea as population_density FROM
+world.Country c WHERE c.Population > 0 AND c.SurfaceArea > 0 ORDER BY population_density DESC LIMIT 
+50
+
+  2. Find countries with small populations (< 100,000) - economic data for these may be unreliable. 
+Exclude countries with po…
+     iter=30  dur=31.5s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → run_query → run_query → run_query → run_query → run_query → run_query → run_query →
+run_query → run_query → run_query → run_query → run_query → run_query → run_query → run_query → 
+run_query → run_query → run_query → run_query → run_query → run_query → run_query → run_query → 
+run_query → run_query
+     error: Agent error: Max iterations reached
+     submitted: (none)
+     gold:      SELECT c.Name, c.Population, c.GNP FROM world.Country c WHERE c.Population < 100000 
+AND c.Population > 0
+─────────────────────────────────────── MISMATCH  (35 cases) ───────────────────────────────────────
+
+  1. Find the top 30 constructors with the highest number of races where at least two cars started.
+     iter=20  dur=35.3s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → describe_table → run_query → run_query → run_query → run_query → run_query → 
+run_query → run_query → run_query → run_query → describe_table → run_query → run_query → run_query →
+submit_answer
+     error: Results do not match
+     submitted: WITH started_results AS (
+    SELECT r.raceId, r.constructorId
+    FROM ErgastF1.results r
+    JOIN ErgastF1.status s ON r.statusId = s.statusId
+    JOIN ErgastF1.races ra ON r.raceId = ra.raceId
+    WHERE s.status NOT ILIKE 'Did not%'
+      AND ra.year >= 1980
+),
+filtered AS (
+    SELECT raceId, co
+     gold:      SELECT c.name as constructor, COUNT(DISTINCT r1.raceId) as 
+races_at_least_two_started FROM ErgastF1.results r1 JOIN ErgastF1.results r2 ON r1.raceId = 
+r2.raceId AND r1.constructorId = r2.constructorId AND r1.resultId < r2.resultId JOIN 
+ErgastF1.constructors c ON r1.constructorId = c.constructorId WH
+     llm_category: wrong_filter
+     llm_reason: The submitted query filters out results based on status and year, which differs 
+from the gold query's simpler filter on grid > 0, leading to different sets of races and 
+constructors counted.
+
+  2. Calculate win rates for White players (with at least 5 games). Return the 30 players with the 
+highest win rates, ordered…
+     iter=5  dur=7.2s  tools: search_rules → list_schemas → list_tables → describe_table → 
+submit_answer
+     error: Results do not match
+     ⚠  Agent submitted without testing the query via run_query.
+     submitted: SELECT white,
+       SUM(CASE WHEN game_result = '1-0' THEN 1
+                WHEN game_result = '1/2-1/2' THEN 0.5
+                ELSE 0 END)::DOUBLE / COUNT(*) AS win_rate
+FROM Chess.game
+WHERE white IS NOT NULL
+GROUP BY white
+HAVING COUNT(*) >= 5
+ORDER BY win_rate DESC
+LIMIT 30;
+     gold:      SELECT g.white as player, CAST(SUM(CASE WHEN g.game_result = '1-0' THEN 1 ELSE 0 
+END) AS REAL) / COUNT(*) as win_rate FROM Chess.game g JOIN Chess.opening o ON g.opening_id = 
+o.opening_id WHERE o.name NOT LIKE '%French%' AND o.name NOT LIKE '%Sicilian%' GROUP BY g.white 
+HAVING COUNT(*) >= 5 ORDER BY
+     llm_category: wrong_filter
+     llm_reason: The submitted query does not exclude games with openings containing 'French' or 
+'Sicilian', unlike the gold query which filters these out.
+
+  3. Calculate the loan portfolio size by status for each loan classification. Show the loan 
+classification, count, and total…
+     iter=7  dur=11.0s  tools: search_rules → list_schemas → list_tables → describe_table → 
+search_rules → run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT status AS "loan classification", COUNT(*) AS "count", SUM(amount) AS "total 
+amount"
+FROM financial.loan
+GROUP BY status
+ORDER BY status
+     gold:      SELECT CASE WHEN status = 'A' THEN 'Performing' WHEN status = 'B' THEN 'Watch List' 
+WHEN status IN ('C', 'D') THEN 'Non-Performing' END as loan_classification, COUNT(*) as loan_count, 
+SUM(amount) as total_amount FROM financial.loan GROUP BY CASE WHEN status = 'A' THEN 'Performing' 
+WHEN status = 'B' 
+     llm_category: wrong_groupby
+     llm_reason: The submitted query groups by the raw status values instead of the loan 
+classification derived from the CASE statement, leading to different grouping and results.
+
+  4. What is the count of diverted flights by route (origin-destination pair), including only routes
+with more than 5 diversi…
+     iter=7  dur=7.0s  tools: search_rules → list_schemas → list_tables → describe_table → run_query
+→ run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT Origin, Dest, COUNT(*) AS diverted_flights
+FROM Airline.On_Time_On_Time_Performance_2016_1
+WHERE Diverted = 1
+  AND Cancelled = 0
+  AND DepTime IS NOT NULL
+  AND ArrTime IS NOT NULL
+GROUP BY Origin, Dest
+HAVING COUNT(*) > 5
+ORDER BY diverted_flights DESC
+     gold:      SELECT Origin, Dest, COUNT(*) as diverted_count FROM 
+Airline.On_Time_On_Time_Performance_2016_1 WHERE Diverted = 1 GROUP BY Origin, Dest HAVING COUNT(*) 
+> 5
+     llm_category: wrong_filter
+     llm_reason: The submitted query includes additional filters on Cancelled, DepTime, and ArrTime 
+that are not present in the gold query, causing different results.
+
+  5. Find the top 50 NHL players by average goals per season, only including players with at least 5
+seasons.
+     iter=8  dur=13.1s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → run_query → run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT s.playerID, m.firstName, m.lastName,
+       SUM(s.G)::DOUBLE / COUNT(DISTINCT s.year) AS avg_goals_per_season
+FROM Hockey.Scoring s
+JOIN Hockey.Master m USING (playerID)
+WHERE s.lgID = 'NHL'
+GROUP BY s.playerID, m.firstName, m.lastName
+HAVING COUNT(DISTINCT s.year) >= 5
+ORDER BY avg_goals_per
+     gold:      SELECT m.firstName, m.lastName, CAST(SUM(s.G) AS REAL) / COUNT(DISTINCT s.year) as 
+avg_goals_per_season, COUNT(DISTINCT s.year) as seasons FROM Hockey.Scoring s JOIN Hockey.Master m 
+ON s.playerID = m.playerID WHERE s.lgID = 'NHL' GROUP BY s.playerID, m.firstName, m.lastName HAVING 
+COUNT(DISTINCT s.y
+     llm_category: wrong_aggregation
+     llm_reason: The submitted query uses SUM(s.G)::DOUBLE which may cause type casting differences 
+compared to CAST(SUM(s.G) AS REAL) in the gold query, potentially affecting the average calculation 
+and results.
+
+  6. Identify the top 30 microbreweries with the smallest beer catalogs.
+     iter=8  dur=13.1s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → run_query → run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT b.name, b.city, b.state, COUNT(be.id) AS beer_count
+FROM CraftBeer.breweries b
+LEFT JOIN CraftBeer.beers be ON b.id = be.brewery_id
+WHERE b.city IS NOT NULL AND b.state IS NOT NULL
+GROUP BY b.name, b.city, b.state
+HAVING COUNT(be.id) < 3
+ORDER BY beer_count ASC, b.name ASC
+LIMIT 30;
+     gold:      SELECT br.id, br.name, COUNT(b.id) as beer_count FROM CraftBeer.breweries br JOIN 
+CraftBeer.beers b ON br.id = b.brewery_id GROUP BY br.id, br.name HAVING COUNT(b.id) < 3 ORDER BY 
+beer_count ASC, br.name LIMIT 30
+     llm_category: wrong_groupby
+     llm_reason: The submitted query groups by brewery name, city, and state instead of brewery id 
+and name, causing different aggregation and results.
+
+  7. List each constructor-season combination where the constructor scored more than 100 total 
+points, for seasons after when…
+     iter=9  dur=16.8s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → describe_table → run_query → run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT c.name AS constructor_name, r.year, SUM(cr.points) AS total_points
+FROM ErgastF1.constructorResults cr
+JOIN ErgastF1.constructors c ON cr.constructorId = c.constructorId
+JOIN ErgastF1.races r ON cr.raceId = r.raceId
+WHERE r.year >= 2010
+GROUP BY c.constructorId, c.name, r.year
+HAVING SUM(cr.p
+     gold:      SELECT c.name AS constructor, ra.year, SUM(r.points) AS total_points FROM 
+ErgastF1.results r JOIN ErgastF1.constructors c ON r.constructorId = c.constructorId JOIN 
+ErgastF1.races ra ON r.raceId = ra.raceId WHERE ra.year >= 2010 AND r.position IS NOT NULL AND 
+r.position > 0 GROUP BY c.constructorId, 
+     llm_category: wrong_column
+     llm_reason: The submitted query aggregates points from constructorResults instead of results, 
+which may have different data and filtering criteria, leading to different results.
+
+  8. Find the top 30 accounts by total absolute transaction volume, excluding legacy transactions?
+     iter=8  dur=10.5s  tools: search_rules → list_schemas → list_tables → describe_table → 
+run_query → describe_table → run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT account_id,
+       SUM(ABS(amount)) AS total_abs_volume
+FROM financial.trans
+WHERE date >= DATE '1995-01-01'
+GROUP BY account_id
+ORDER BY total_abs_volume DESC
+LIMIT 30
+     gold:      SELECT a.account_id, SUM(ABS(t.amount)) as total_volume FROM financial.account a 
+JOIN financial.trans t ON a.account_id = t.account_id WHERE (t.k_symbol IS NULL OR t.k_symbol != 
+'UROK') AND t.date >= '1995-01-01' GROUP BY a.account_id ORDER BY total_volume DESC LIMIT 30
+     llm_category: wrong_filter
+     llm_reason: The submitted query did not exclude legacy transactions by filtering out rows where
+k_symbol = 'UROK' or k_symbol is not null, unlike the gold query.
+
+  9. For each ECO code, show the game count, white wins, black wins, and draws. Only include ECO 
+codes with at least 5 games.
+     iter=6  dur=8.1s  tools: search_rules → list_schemas → list_tables → describe_table → run_query
+→ submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT ECO,
+       COUNT(*) AS game_count,
+       SUM(CASE WHEN game_result = '1-0' THEN 1 ELSE 0 END) AS white_wins,
+       SUM(CASE WHEN game_result = '0-1' THEN 1 ELSE 0 END) AS black_wins,
+       SUM(CASE WHEN game_result = '1/2-1/2' THEN 1 ELSE 0 END) AS draws
+FROM Chess.game
+WHERE game_result 
+     gold:      SELECT g.ECO, COUNT(*) as game_count, SUM(CASE WHEN g.game_result = '1-0' THEN 1 
+ELSE 0 END) as white_wins, SUM(CASE WHEN g.game_result = '0-1' THEN 1 ELSE 0 END) as black_wins, 
+SUM(CASE WHEN g.game_result = '1/2-1/2' THEN 1 ELSE 0 END) as draws FROM Chess.game g JOIN 
+Chess.opening o ON g.opening_id
+     llm_category: wrong_filter
+     llm_reason: The submitted query filters on game_result NOT LIKE '%F%' instead of excluding 
+openings with names containing 'French' or 'Sicilian', leading to different result sets.
+
+  10. Group charges by spending type. Show the spending_type, charge_count, and total_amount.
+     iter=7  dur=9.1s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT c.category_desc AS spending_type,
+       COUNT(*) AS charge_count,
+       SUM(ch.charge_amt) AS total_amount
+FROM Credit.charge ch
+JOIN Credit.category c ON ch.category_no = c.category_no
+WHERE ch.charge_code <> 'RF'  -- exclude refunds
+  AND ch.charge_amt <> 0.01   -- exclude test transactio
+     gold:      SELECT CASE WHEN c.category_no BETWEEN 1 AND 10 THEN 'Essential' WHEN c.category_no 
+BETWEEN 11 AND 20 THEN 'Discretionary' ELSE 'Other' END as spending_type, COUNT(*) as charge_count, 
+SUM(c.charge_amt) as total_amount FROM Credit.charge c WHERE c.charge_amt != 0.01 AND c.charge_code 
+!= 'RF' GROUP BY
+     llm_category: wrong_groupby
+     llm_reason: The submitted query groups by category_desc instead of grouping by the 
+spending_type CASE expression based on category_no ranges, leading to different groupings and 
+results.
+
+  11. Find the names and years of the top 50 Hall of Fame players by career hits.
+     iter=10  dur=16.0s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → describe_table → run_query → run_query → run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT (p.nameFirst || ' ' || p.nameLast) AS player_name,
+       h.yearID AS induction_year
+FROM lahman_2014.halloffame h
+JOIN lahman_2014.players p ON h.hofID = p.hofID
+JOIN lahman_2014.batting b ON p.playerID = b.playerID
+WHERE h.inducted = 'Y' AND h.category = 'Player'
+GROUP BY p.playerID, p.name
+     gold:      SELECT p.nameFirst, p.nameLast, h.yearID as inducted_year, sum(b.H) as career_hits 
+FROM lahman_2014.halloffame h JOIN lahman_2014.players p ON h.hofID = p.hofID JOIN 
+lahman_2014.batting b ON p.playerID = b.playerID WHERE h.inducted = 'Y' AND h.category = 'Player' 
+GROUP BY p.playerID, p.nameFirst, p.
+     llm_category: wrong_filter
+     llm_reason: The submitted query is missing the HAVING clause that filters players with at least
+100 at-bats, which changes the result set compared to the gold query.
+
+  12. Find the top 30 F1 drivers (first name and last name) by race completion rate, only including 
+drivers with at least 50 r…
+     iter=9  dur=12.8s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → run_query → describe_table → run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT d.forename AS first_name,
+       d.surname AS last_name,
+       COUNT(r.resultId) AS total_races,
+       SUM(CASE WHEN s.status = 'Finished' THEN 1 ELSE 0 END) AS completed_races,
+       ROUND(100.0 * SUM(CASE WHEN s.status = 'Finished' THEN 1 ELSE 0 END) / COUNT(r.resultId), 2) 
+AS completion
+     gold:      SELECT d.forename, d.surname, COUNT(*) as total_races, SUM(CASE WHEN r.position IS 
+NOT NULL AND r.position > 0 THEN 1 ELSE 0 END) as completed_races, CAST(SUM(CASE WHEN r.position IS 
+NOT NULL AND r.position > 0 THEN 1 ELSE 0 END) AS REAL) / COUNT(*) as completion_rate FROM 
+ErgastF1.results r JOIN Er
+     llm_category: wrong_filter
+     llm_reason: The submitted query filters completed races based on status = 'Finished', whereas 
+the gold query uses position IS NOT NULL AND position > 0 to determine race completion, leading to 
+different results.
+
+  13. Find the top 50 statements by net amount.
+     iter=7  dur=6.3s  tools: search_rules → list_schemas → list_tables → describe_table → 
+list_tables → run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT statement_no, statement_amt AS net_amount
+FROM Credit.statement
+ORDER BY statement_amt DESC
+LIMIT 50
+     gold:      SELECT c.statement_no, SUM(CASE WHEN c.charge_code != 'RF' THEN c.charge_amt ELSE 0 
+END) as gross_charges, SUM(CASE WHEN c.charge_code = 'RF' THEN c.charge_amt ELSE 0 END) as refunds, 
+SUM(CASE WHEN c.charge_code != 'RF' THEN c.charge_amt ELSE 0 END) - SUM(CASE WHEN c.charge_code = 
+'RF' THEN c.charge
+     llm_category: wrong_column
+     llm_reason: The submitted query uses statement_amt directly from Credit.statement instead of 
+calculating net_amount by summing and subtracting charge amounts from Credit.charge as in the gold 
+query.
+
+  14. Find the default rate for loans.
+     iter=8  dur=11.2s  tools: search_rules → search_rules → list_schemas → list_tables → 
+describe_table → run_query → run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT (SUM(CASE WHEN status IN ('C','D') THEN 1 ELSE 0 END)::DOUBLE / COUNT(*)) * 
+100 AS default_rate FROM financial.loan
+     gold:      SELECT CAST(COUNT(CASE WHEN status IN ('C', 'D') THEN 1 END) AS REAL) / COUNT(CASE 
+WHEN status NOT IN ('B') THEN 1 END) as default_rate_pct FROM financial.loan
+     llm_category: wrong_filter
+     llm_reason: The submitted query divides by the total count of all rows without excluding status
+'B', unlike the gold query which excludes status 'B' from the denominator.
+
+  15. Calculate total points by constructor and year for each season from when points systems became
+comparable.
+     iter=16  dur=28.9s  tools: list_schemas → search_rules → list_tables → describe_table → 
+describe_table → describe_table → describe_table → run_query → search_rules → run_query → run_query 
+→ run_query → run_query → list_tables → run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT c.name AS constructor,
+       r.year,
+       SUM(CASE WHEN r.name ILIKE '%Sprint%' THEN 0 ELSE cr.points END) AS main_points,
+       SUM(CASE WHEN r.name ILIKE '%Sprint%' THEN cr.points ELSE 0 END) AS sprint_points
+FROM ErgastF1.constructorResults cr
+JOIN ErgastF1.races r ON cr.raceId = r.rac
+     gold:      SELECT c.name as constructor_name, ra.year, SUM(r.points) as total_points FROM 
+ErgastF1.results r JOIN ErgastF1.constructors c ON r.constructorId = c.constructorId JOIN 
+ErgastF1.races ra ON r.raceId = ra.raceId WHERE r.position IS NOT NULL AND r.position > 0 AND 
+ra.year >= 2010 GROUP BY c.constructo
+     llm_category: wrong_column
+     llm_reason: The submitted query aggregates points from constructorResults with separate 
+handling for sprint races, while the gold query sums points from results table filtered by position,
+leading to different data sources and columns used for aggregation.
+
+  16. Find district names (A2) with fewer than 50 accounts that should be aggregated as 'Other' for 
+reporting, as well as thei…
+     iter=7  dur=12.6s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT d.A2 AS district_name, COUNT(a.account_id) AS account_count
+FROM financial.account a
+JOIN financial.district d ON a.district_id = d.district_id
+WHERE d.district_id NOT IN (1,70,71,72,73,74,75,76,77)
+GROUP BY d.district_id, d.A2
+HAVING COUNT(a.account_id) < 50
+ORDER BY account_count ASC;
+     gold:      SELECT d.A2 as district_name, COUNT(a.account_id) as account_count FROM 
+financial.district d LEFT JOIN financial.account a ON d.district_id = a.district_id GROUP BY 
+d.district_id, d.A2 HAVING COUNT(a.account_id) < 50
+     llm_category: wrong_filter
+     llm_reason: The submitted query filters out certain district IDs explicitly, which is not 
+present in the gold query, causing different results.
+
+  17. What is the on-time performance percentage for each unique airline carrier? Round the 
+percentage to 2 decimal places.
+     iter=6  dur=12.7s  tools: search_rules → list_schemas → list_tables → describe_table → 
+run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT UniqueCarrier,
+       ROUND(100.0 * SUM(CASE WHEN Cancelled = 0 
+                                 AND ArrDel15 = 0 
+                                 AND (WeatherDelay IS NULL OR WeatherDelay = 0)
+                                 AND DepTime IS NOT NULL 
+                                 AND Ar
+     gold:      SELECT UniqueCarrier, ROUND((SUM(CASE WHEN ArrDelayMinutes <= 15 THEN 1 ELSE 0 END) 
+* 100.0 / COUNT(*)), 2) as on_time_percentage FROM Airline.On_Time_On_Time_Performance_2016_1 WHERE 
+DepTime IS NOT NULL AND ArrTime IS NOT NULL AND Cancelled = 0 AND Diverted = 0 AND (WeatherDelay IS 
+NULL OR WeatherD
+     llm_category: wrong_aggregation
+     llm_reason: The submitted query uses different denominators and conditions in the aggregation, 
+counting only flights with no weather delay in the denominator instead of all valid flights, leading
+to different on-time percentages.
+
+  18. Find salary statistics for departments where salary statistics can be reported. Show me 
+employee count and average salar…
+     iter=8  dur=15.0s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → describe_table → run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT d.dept_name,
+       COUNT(DISTINCT de.emp_no) AS employee_count,
+       AVG(s.salary) AS avg_salary
+FROM employee.dept_emp de
+JOIN employee.departments d ON de.dept_no = d.dept_no
+JOIN employee.salaries s ON de.emp_no = s.emp_no AND s.to_date = DATE '9999-01-01'
+LEFT JOIN employee.dept_manage
+     gold:      SELECT d.dept_name, COUNT(DISTINCT e.emp_no) as employee_count, AVG(s.salary) as 
+avg_salary FROM employee.dept_emp de JOIN employee.departments d ON de.dept_no = d.dept_no JOIN 
+employee.employees e ON de.emp_no = e.emp_no JOIN employee.salaries s ON e.emp_no = s.emp_no WHERE 
+de.to_date = '9999-01-01
+     llm_category: wrong_filter
+     llm_reason: The submitted query excludes managers by filtering with a LEFT JOIN and dm.emp_no 
+IS NULL, which is not present in the gold query, causing different employee counts and salary 
+averages.
+
+  19. Aggregate loan statistics for districts 70-77 as a single 'Eastern Region' entity, showing 
+total loans and average loan …
+     iter=7  dur=6.8s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → describe_table → submit_answer
+     error: Results do not match
+     ⚠  Agent submitted without testing the query via run_query.
+     submitted: SELECT 'Eastern Region' AS region,
+       SUM(l.amount) AS total_loans,
+       AVG(l.amount) AS avg_loan_amount
+FROM financial.loan AS l
+JOIN financial.account AS a ON l.account_id = a.account_id
+WHERE a.district_id BETWEEN 70 AND 77
+  AND l.status = 'A';
+     gold:      SELECT 'Eastern Region' as region, COUNT(l.loan_id) as total_loans, AVG(l.amount) as
+avg_loan_amount FROM financial.district d JOIN financial.account a ON d.district_id = a.district_id 
+JOIN financial.loan l ON a.account_id = l.account_id WHERE d.district_id BETWEEN 70 AND 77 AND 
+l.status = 'A'
+     llm_category: wrong_aggregation
+     llm_reason: The submitted query sums loan amounts instead of counting loans for total_loans, 
+causing a mismatch with the gold query's aggregation.
+
+  20. Find the top 50 NHL players by career points, only including players with at least 5 seasons.
+     iter=7  dur=7.3s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT m.playerID, m.firstName, m.lastName, SUM(s.Pts) AS career_points, 
+COUNT(DISTINCT s.year) AS seasons
+FROM Hockey.Scoring s
+JOIN Hockey.Master m USING (playerID)
+WHERE s.lgID = 'NHL' AND s.GP > 0
+GROUP BY m.playerID, m.firstName, m.lastName
+HAVING COUNT(DISTINCT s.year) >= 5
+ORDER BY career_poi
+     gold:      SELECT s.playerID, m.firstName, m.lastName, SUM(s.Pts) as career_points, 
+COUNT(DISTINCT s.year) as seasons FROM Hockey.Scoring s JOIN Hockey.Master m ON s.playerID = 
+m.playerID WHERE s.lgID = 'NHL' GROUP BY s.playerID, m.firstName, m.lastName HAVING COUNT(DISTINCT 
+s.year) >= 5 ORDER BY career_points
+     llm_category: wrong_filter
+     llm_reason: The submitted query added an extra filter 's.GP > 0' which was not present in the 
+gold query, causing different results.
+
+  21. Find the top 10 batters (name, year) by batting average (H/AB).
+     iter=7  dur=7.4s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT p.nameFirst || ' ' || p.nameLast AS name,
+       b.yearID AS year
+FROM lahman_2014.batting b
+JOIN lahman_2014.players p ON b.playerID = p.playerID
+WHERE b.AB >= 100
+ORDER BY CAST(b.H AS DOUBLE) / b.AB DESC
+LIMIT 10
+     gold:      SELECT p.nameFirst, p.nameLast, b.yearID, CAST(b.H AS REAL) / b.AB as batting_avg 
+FROM lahman_2014.batting b JOIN lahman_2014.players p ON b.playerID = p.playerID WHERE b.AB >= 100 
+ORDER BY batting_avg DESC LIMIT 10
+     llm_category: wrong_column
+     llm_reason: The submitted query does not select or return the batting average column, which 
+affects the ordering and output compared to the gold query.
+
+  22. List 'high-gravity' beers along with their brewery information and abv. Note: ABV is stored as
+a decimal (e.g., 0.095 fo…
+     iter=7  dur=8.3s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT b.name AS beer_name,
+       br.name AS brewery_name,
+       br.city,
+       br.state,
+       b.abv
+FROM CraftBeer.beers b
+JOIN CraftBeer.breweries br ON b.brewery_id = br.id
+WHERE b.abv >= 0.095
+ORDER BY b.abv DESC
+     gold:      SELECT b.name as beer_name, b.abv as abv_percent, b.style, br.name as brewery_name, 
+br.city, br.state FROM CraftBeer.beers b JOIN CraftBeer.breweries br ON b.brewery_id = br.id WHERE 
+b.abv >= 0.095 ORDER BY b.abv DESC
+     llm_category: wrong_column
+     llm_reason: The submitted query omitted the 'b.style' column present in the gold query, causing
+a difference in the result set columns.
+
+  23. Find the top 50 member-quarters by charge count. I want to see the member's first and last 
+name, the statement number, t…
+     iter=8  dur=17.5s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → describe_table → run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT m.firstname,
+       m.lastname,
+       s.statement_no,
+       SUM(CASE WHEN c.charge_code <> 'RF' THEN 1 ELSE 0 END) AS charge_count,
+       SUM(CASE WHEN c.charge_code = 'RF' THEN -c.charge_amt ELSE c.charge_amt END) AS total_charges
+FROM Credit.charge c
+JOIN Credit.statement s ON c.statemen
+     gold:      SELECT m.firstname, m.lastname, c.statement_no, COUNT(*) as charge_count, 
+SUM(c.charge_amt) as total_charges FROM Credit.member m JOIN Credit.charge c ON m.member_no = 
+c.member_no WHERE c.charge_amt != 0.01 AND c.charge_code != 'RF' GROUP BY m.member_no, m.firstname, 
+m.lastname, c.statement_no ORDER
+     llm_category: wrong_groupby
+     llm_reason: The submitted query groups by a truncated quarter date which is not present in the 
+gold query, causing different aggregation granularity and results.
+
+  24. Find the top 30 driver names by fastest lap time.
+     iter=8  dur=9.6s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → describe_table → list_tables → submit_answer
+     error: Results do not match
+     ⚠  Agent submitted without testing the query via run_query.
+     submitted: SELECT d.forename || ' ' || d.surname AS driver_name,
+       MIN(l.milliseconds) AS fastest_lap_ms
+FROM ErgastF1.lapTimes l
+JOIN ErgastF1.drivers d ON l.driverId = d.driverId
+WHERE l.milliseconds >= 60000
+GROUP BY d.driverId, d.forename, d.surname
+ORDER BY fastest_lap_ms ASC
+LIMIT 30;
+     gold:      SELECT d.forename, d.surname, MIN(lt.milliseconds) as fastest_lap_ms FROM 
+ErgastF1.lapTimes lt JOIN ErgastF1.drivers d ON lt.driverId = d.driverId WHERE lt.milliseconds >= 
+60000 GROUP BY d.driverId, d.forename, d.surname ORDER BY fastest_lap_ms ASC LIMIT 30
+     llm_category: other
+     llm_reason: The submitted query concatenates forename and surname into a single column, which 
+changes the output format compared to the gold query that selects them as separate columns.
+
+  25. Find all origin/destination airport pairs that are thin routes. How many such pairs are there?
+     iter=5  dur=8.0s  tools: search_rules → list_schemas → list_tables → describe_table → 
+submit_answer
+     error: Results do not match
+     ⚠  Agent submitted without testing the query via run_query.
+     submitted: SELECT COUNT(*) AS thin_route_pairs
+FROM (
+    SELECT Origin, Dest, COUNT(*) AS flight_cnt
+    FROM Airline.On_Time_On_Time_Performance_2016_1
+    GROUP BY Origin, Dest
+    HAVING COUNT(*) < 50
+) t;
+     gold:      SELECT COUNT(*) AS thin_route_count FROM (SELECT Origin, Dest FROM 
+Airline.On_Time_On_Time_Performance_2016_1 WHERE DepTime IS NOT NULL AND ArrTime IS NOT NULL GROUP 
+BY Origin, Dest HAVING COUNT(*) < 50) thin_routes
+     llm_category: null_handling
+     llm_reason: The submitted query does not filter out rows with NULL DepTime or ArrTime, unlike 
+the gold query, leading to different counts of thin routes.
+
+  26. Calculate the current headcount by department based on their current department assignment, 
+counting each employee only …
+     iter=10  dur=14.0s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → run_query → describe_table → run_query → run_query → submit_answer
+     error: Results do not match
+     submitted: WITH latest_dept AS (
+  SELECT de.emp_no, de.dept_no,
+         ROW_NUMBER() OVER (PARTITION BY de.emp_no ORDER BY de.to_date DESC) AS rn
+  FROM employee.dept_emp de
+)
+SELECT d.dept_name, COUNT(*) AS headcount
+FROM latest_dept ld
+JOIN employee.departments d ON ld.dept_no = d.dept_no
+WHERE ld.rn = 1
+ 
+     gold:      SELECT d.dept_name, COUNT(DISTINCT de.emp_no) as headcount FROM employee.dept_emp de
+JOIN employee.departments d ON de.dept_no = d.dept_no WHERE de.to_date = '9999-01-01' AND de.emp_no 
+NOT IN (SELECT emp_no FROM employee.dept_manager WHERE to_date = '9999-01-01') GROUP BY d.dept_name
+     llm_category: wrong_filter
+     llm_reason: The submitted query includes employees based on their latest department assignment 
+regardless of whether their to_date is '9999-01-01', whereas the gold query explicitly filters for 
+current assignments with to_date = '9999-01-01'.
+
+  27. What is the total amount of performing loans by district name?
+     iter=9  dur=8.3s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → describe_table → run_query → run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT d.A2 AS district_name,
+       SUM(l.amount) AS total_performing_loan_amount
+FROM financial.loan l
+JOIN financial.account a ON l.account_id = a.account_id
+JOIN financial.district d ON a.district_id = d.district_id
+WHERE l.status = 'A'
+GROUP BY d.district_id, d.A2
+ORDER BY d.A2
+     gold:      SELECT d.A2 as district_name, SUM(l.amount) as total_loan_amount FROM 
+financial.district d JOIN financial.account a ON d.district_id = a.district_id JOIN financial.loan l
+ON a.account_id = l.account_id WHERE l.status = 'A' AND d.district_id != 1 GROUP BY d.A2
+     llm_category: wrong_filter
+     llm_reason: The submitted query is missing the filter condition excluding district_id = 1, 
+which causes the results to differ from the gold query.
+
+  28. What are the top three openings by games played? Count games separately for each opening_id 
+(do not deduplicate by name)…
+     iter=7  dur=9.0s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT g.opening_id, COUNT(*) AS games_played
+FROM Chess.game g
+JOIN Chess.opening o ON g.opening_id = o.opening_id
+WHERE o.name NOT ILIKE '%French Defense%'
+  AND o.name NOT ILIKE '%Sicilian Defense%'
+GROUP BY g.opening_id
+ORDER BY games_played DESC
+LIMIT 3
+     gold:      SELECT o.name as opening_name, COUNT(*) as game_count FROM Chess.game g JOIN 
+Chess.opening o ON g.opening_id = o.opening_id WHERE o.name NOT LIKE '%French%' AND o.name NOT LIKE 
+'%Sicilian%' GROUP BY o.opening_id, o.name ORDER BY game_count DESC LIMIT 3
+     llm_category: wrong_filter
+     llm_reason: The submitted query filters with 'NOT ILIKE' on '%French Defense%' and '%Sicilian 
+Defense%', which is more restrictive than the gold query's 'NOT LIKE' on '%French%' and 
+'%Sicilian%', causing different rows to be excluded.
+
+  29. Show the region, loan count, total loan amount, and average loan amount for each loan 
+classification. Label Prague as 'P…
+     iter=9  dur=15.2s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → run_query → describe_table → run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT CASE WHEN d.A3 = 'Prague' THEN 'Prague' ELSE 'Other Districts' END AS region,
+       l.status AS loan_classification,
+       COUNT(*) AS loan_count,
+       SUM(l.amount) AS total_loan_amount,
+       AVG(l.amount) AS average_loan_amount
+FROM financial.loan l
+JOIN financial.account a ON l.accou
+     gold:      SELECT CASE WHEN d.district_id = 1 THEN 'Prague' ELSE 'Other Districts' END as 
+region, COUNT(l.loan_id) as loan_count, SUM(l.amount) as total_loan_amount, AVG(l.amount) as 
+avg_loan_amount FROM financial.district d JOIN financial.account a ON d.district_id = a.district_id 
+JOIN financial.loan l ON a.a
+     llm_category: wrong_groupby
+     llm_reason: The submitted query groups by both region and loan classification, while the gold 
+query groups only by region, causing different aggregation results.
+
+  30. Analyze completed flights by day of week for January 2016. Give total flights, on-time 
+flights, and average delay in min…
+     iter=7  dur=15.4s  tools: search_rules → list_schemas → list_tables → describe_table → 
+run_query → run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT DayOfWeek,
+       COUNT(*) AS total_flights,
+       SUM(CASE WHEN ArrDelayMinutes <= 15 AND (WeatherDelay IS NULL OR WeatherDelay = 0) THEN 1 
+ELSE 0 END) AS on_time_flights,
+       AVG(CASE WHEN ArrDelayMinutes > 15 AND (WeatherDelay IS NULL OR WeatherDelay = 0) THEN 
+ArrDelayMinutes END) AS a
+     gold:      SELECT DayOfWeek, COUNT(*) as total_flights, SUM(CASE WHEN ArrDelayMinutes <= 15 
+THEN 1 ELSE 0 END) as on_time_flights, AVG(ArrDelayMinutes) as avg_delay FROM 
+Airline.On_Time_On_Time_Performance_2016_1 WHERE DepTime IS NOT NULL AND ArrTime IS NOT NULL AND 
+Cancelled = 0 AND Month = 1 GROUP BY DayOfWe
+     llm_category: wrong_filter
+     llm_reason: The submitted query filters on WeatherDelay being NULL or 0 for on-time flights and
+average delay, which is not present in the gold query, causing different results.
+
+  31. Compare average salaries by gender for current employees.
+     iter=9  dur=22.7s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → describe_table → describe_table → run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: WITH current_emp AS (
+  SELECT e.emp_no,
+         e.gender,
+         e.hire_date,
+         de.dept_no,
+         t.title,
+         s.salary,
+         DATE_PART('year', CURRENT_DATE) - DATE_PART('year', e.hire_date) AS tenure_years
+  FROM employee.employees e
+  JOIN employee.dept_emp de ON e.emp_no = 
+     gold:      SELECT e.gender, AVG(s.salary) as avg_salary FROM employee.employees e JOIN 
+employee.salaries s ON e.emp_no = s.emp_no WHERE s.to_date = '9999-01-01' GROUP BY e.gender HAVING 
+COUNT(*) >= 10
+     llm_category: over_engineering
+     llm_reason: The submitted query introduces unnecessary grouping by multiple columns and 
+additional calculations, which changes the aggregation logic and results compared to the simpler 
+gold query.
+
+  32. List major cities along with their country information.
+     iter=6  dur=6.2s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → submit_answer
+     error: Results do not match
+     ⚠  Agent submitted without testing the query via run_query.
+     submitted: SELECT c.Name AS city_name,
+       c.Population AS city_population,
+       co.Name AS country_name,
+       co.Continent,
+       co.Region,
+       co.Population AS country_population
+FROM world.City c
+JOIN world.Country co ON c.CountryCode = co.Code
+WHERE c.Population > 2000000
+   OR c.ID = co.Capita
+     gold:      SELECT ci.Name as city_name, ci.Population, co.Name as country_name, co.Continent, 
+co.Region FROM world.City ci JOIN world.Country co ON ci.CountryCode = co.Code WHERE ci.Population >
+2000000
+     llm_category: wrong_filter
+     llm_reason: The submitted query includes an OR condition to also select cities that are 
+capitals, which adds extra rows beyond the population filter in the gold query.
+
+  33. Find the top 50 starting pitchers by games started, showing their season statistics. I want to
+see the player's first an…
+     iter=7  dur=11.5s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → run_query → submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT p.nameFirst AS first_name,
+       p.nameLast AS last_name,
+       py.yearID AS year,
+       SUM(py.GS) AS games_started,
+       SUM(py.IPouts) / 3.0 AS innings_pitched,
+       SUM(py.ER) AS earned_runs
+FROM lahman_2014.pitching py
+JOIN lahman_2014.players p ON py.playerID = p.playerID
+GROUP B
+     gold:      SELECT p.nameFirst, p.nameLast, pi.yearID, pi.GS as games_started, pi.IPouts / 3 as 
+innings_pitched, pi.ER FROM lahman_2014.pitching pi JOIN lahman_2014.players p ON pi.playerID = 
+p.playerID WHERE pi.GS > 0 AND pi.IPouts >= 150 ORDER BY pi.GS DESC LIMIT 50
+     llm_category: wrong_aggregation
+     llm_reason: The submitted query aggregates statistics by player and year, summing games started
+and other stats, whereas the gold query selects individual season records without aggregation, 
+leading to different results.
+
+  34. Find the top 50 non-reliever pitchers by ERA (Earned Run Average). Show the player's first and
+last name, the year, the …
+     iter=8  dur=11.5s  tools: search_rules → list_schemas → list_tables → describe_table → 
+describe_table → run_query → run_query → submit_answer
+     error: Results do not match
+     submitted: SELECT p.nameFirst,
+       p.nameLast,
+       pi.yearID AS year,
+       SUM(pi.IPouts) / 3.0 AS innings,
+       (SUM(pi.ER) * 9.0) / (SUM(pi.IPouts) / 3.0) AS ERA
+FROM lahman_2014.pitching pi
+JOIN lahman_2014.players p ON pi.playerID = p.playerID
+GROUP BY p.nameFirst, p.nameLast, pi.yearID
+HAVING SU
+     gold:      SELECT p.nameFirst, p.nameLast, pi.yearID, pi.IPouts / 3 as innings_pitched, (pi.ER 
+* 9.0) / (pi.IPouts / 3.0) as ERA FROM lahman_2014.pitching pi JOIN lahman_2014.players p ON 
+pi.playerID = p.playerID WHERE pi.IPouts >= 150 ORDER BY ERA ASC LIMIT 50
+     llm_category: wrong_aggregation
+     llm_reason: The submitted query aggregates pitching stats across multiple entries per 
+player-year, while the gold query uses individual pitching records without aggregation, leading to 
+different ERA calculations.
+
+  35. Calculate the average transaction value.
+     iter=6  dur=6.0s  tools: search_rules → list_schemas → list_tables → describe_table → run_query
+→ submit_answer
+     error: Results do not match
+     ⚠  Agent ran exactly one query then submitted immediately.
+     submitted: SELECT AVG(amount) AS avg_transaction_value FROM financial.trans WHERE k_symbol IS 
+NOT NULL AND k_symbol <> 'UROK' AND date >= DATE '1995-01-01' AND NOT (type = 'PRIJEM' AND amount < 
+1000)
+     gold:      SELECT AVG(charge_amt) as avg_transaction_value FROM Credit.charge WHERE charge_amt 
+>= 5 AND charge_amt != 0.01 AND charge_code != 'RF'
+     llm_category: wrong_filter
+     llm_reason: The submitted query uses different filtering conditions and columns compared to the
+gold query, leading to a mismatch in the transactions considered for averaging.
