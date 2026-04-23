@@ -24,8 +24,7 @@ SEARCH_RULES: Tool = Tool(
     description=(
         "Search the business-rules guides for rules relevant to the question. "
         "Call this before writing a query whenever the question may involve "
-        "domain-specific thresholds, exclusions, definitions, or calculations "
-        "(e.g. 'on-time', 'net charge', 'completed flight', 'qualifying loan'). "
+        "domain-specific thresholds, exclusions, definitions, or calculations. "
         "The query should be keywords or a short phrase describing the rule you need."
     ),
     parameters={

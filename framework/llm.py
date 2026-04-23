@@ -52,7 +52,7 @@ class OpenRouterConfig:
     Defaults to gpt-oss-120b on Cerebras provider.
     """
 
-    model: str = "openai/gpt-oss-120b:nitro"
+    model: str = "moonshotai/kimi-k2.6"
     api_key: str = ""
     max_tokens: int = 100000
     temperature: float = 0.2
