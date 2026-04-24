@@ -22,11 +22,10 @@
 ┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━┓
 ┃ Category          ┃ Count ┃ % of judged ┃
 ┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━┩
-│ wrong_filter      │    13 │         52% │
+│ wrong_filter      │    14 │         56% │
 │ wrong_column      │     5 │         20% │
 │ wrong_aggregation │     3 │         12% │
-│ other             │     2 │          8% │
-│ wrong_groupby     │     2 │          8% │
+│ wrong_groupby     │     3 │         12% │
 └───────────────────┴───────┴─────────────┘
 
 ────────────────────────────────────── AGENT_ERROR  (6 cases) ──────────────────────────────────────
@@ -134,9 +133,9 @@ LIMIT 10;
 FROM lahman_2014.batting b JOIN lahman_2014.players p ON b.playerID = p.playerID WHERE b.AB >= 100 
 ORDER BY batting_avg DESC LIMIT 10
      llm_category: wrong_aggregation
-     llm_reason: The submitted query aggregates hits and at-bats over multiple rows per player-year,
-while the gold query calculates batting average per single row without aggregation, leading to 
-different results.
+     llm_reason: The submitted query aggregates hits and at-bats over groups, changing the batting 
+average calculation from per year per player to aggregated sums, unlike the gold query which 
+calculates batting average per player per year without aggregation.
 
   2. Group charges by spending type. Show the spending_type, charge_count, and total_amount.
      iter=7  dur=54.5s  tools: search_rules → list_schemas → list_tables → list_tables → list_tables
@@ -181,8 +180,8 @@ COUNT(DISTINCT s.year) as seasons FROM Hockey.Scoring s JOIN Hockey.Master m ON 
 m.playerID WHERE s.lgID = 'NHL' GROUP BY s.playerID, m.firstName, m.lastName HAVING COUNT(DISTINCT 
 s.year) >= 5 ORDER BY career_points DESC LIMIT 50
      llm_category: wrong_column
-     llm_reason: The submitted query omitted s.playerID from the SELECT clause, causing different 
-result sets compared to the gold query which included s.playerID.
+     llm_reason: The submitted query omitted s.playerID from the SELECT clause, causing differences 
+in the result set compared to the gold query which included s.playerID.
 
   4. Find the names and years of the top 50 Hall of Fame players by career hits.
      iter=19  dur=373.4s  tools: search_rules → list_schemas → list_tables → describe_table → 
@@ -209,7 +208,7 @@ GROUP BY p.playerID, p.nameFirst, p.nameLast, h.yearID HAVING SUM(b.AB) >= 100 O
 DESC LIMIT 50
      llm_category: wrong_filter
      llm_reason: The submitted query is missing the HAVING clause that filters players with at least
-100 at-bats, which changes the result set compared to the gold query.
+100 at-bats, which changes the result set.
 
   5. Find salary statistics for departments where salary statistics can be reported. Show me 
 employee count and average salary by department name.
@@ -246,7 +245,7 @@ de.to_date = '9999-01-01' AND s.to_date = '9999-01-01' GROUP BY d.dept_name HAVI
 e.emp_no) >= 5
      llm_category: wrong_filter
      llm_reason: The submitted query excludes employees who are current department managers, which 
-is not done in the gold query, causing a difference in employee counts and salary averages.
+is not done in the gold query, leading to different employee counts and averages.
 
   6. Find the top 50 Hall of Fame voting results by BBWAA with at least 75% support, showing vote 
 percentages. Give the player's first and last name, the year, the vote percentage.
@@ -263,8 +262,8 @@ vote_percentage FROM lahman_2014.halloffame h JOIN lahman_2014.players p ON h.ho
 h.votedBy = 'BBWAA' AND h.ballots > 0 AND CAST(h.votes AS REAL) / h.ballots >= 0.75 ORDER BY 
 vote_percentage DESC LIMIT 50
      llm_category: wrong_filter
-     llm_reason: The submitted query adds extra filters on h.inducted = 'Y' and h.category = 
-'Player' that are not present in the gold query, causing different results.
+     llm_reason: The submitted query adds extra filters on inducted status and category that are not
+present in the gold query, causing different results.
 
   7. List 'high-gravity' beers along with their brewery information and abv. Note: ABV is stored as 
 a decimal (e.g., 0.095 for 9.5%).
@@ -284,8 +283,8 @@ ORDER BY b.abv DESC, b.name
 br.city, br.state FROM CraftBeer.beers b JOIN CraftBeer.breweries br ON b.brewery_id = br.id WHERE 
 b.abv >= 0.095 ORDER BY b.abv DESC
      llm_category: wrong_column
-     llm_reason: The submitted query omitted the 'b.style' column and used a different alias for 
-'b.abv', causing the result set to differ from the gold query.
+     llm_reason: The submitted query omitted the 'b.style' column which is present in the gold 
+query, causing a difference in the result set columns.
 
   8. Find the top 50 players by career batting average, only including players with at least 500 
 career at-bats.
@@ -308,8 +307,10 @@ LIMIT 50
      gold:      SELECT p.nameFirst, p.nameLast, CAST(SUM(b.H) AS REAL) / SUM(b.AB) as career_ba FROM
 lahman_2014.batting b JOIN lahman_2014.players p ON b.playerID = p.playerID WHERE b.AB >= 100 GROUP 
 BY p.playerID, p.nameFirst, p.nameLast HAVING SUM(b.AB) >= 500 ORDER BY career_ba DESC LIMIT 50
-     llm_category: other
-     llm_reason: Judge error: 'choices'
+     llm_category: wrong_filter
+     llm_reason: The gold query filters out individual seasons with fewer than 100 at-bats before 
+aggregation, while the submitted query does not apply this filter, leading to different aggregated 
+results.
 
   9. Find the top 30 accounts by total absolute transaction volume, excluding legacy transactions?
      iter=5  dur=30.6s  tools: search_rules → list_schemas → list_tables → describe_table → 
@@ -383,8 +384,9 @@ Airline.On_Time_On_Time_Performance_2016_1 WHERE ArrDelayMinutes > 180 AND DepTi
 ArrTime IS NOT NULL AND Cancelled = 0 AND (WeatherDelay IS NULL OR WeatherDelay = 0) GROUP BY 
 Origin, Dest ORDER BY severe_delay_count DESC LIMIT 1
      llm_category: wrong_filter
-     llm_reason: The submitted query omitted filtering out cancelled flights and flights delayed due
-to weather, which the gold query includes to count only completed flights without weather delays.
+     llm_reason: The submitted query omitted the filters for Cancelled = 0 and (WeatherDelay IS NULL
+OR WeatherDelay = 0), causing it to count flights that were cancelled or delayed due to weather, 
+unlike the gold query.
 
   13. List major cities along with their country information.
      iter=10  dur=153.7s  tools: search_rules → list_schemas → list_tables → list_tables → 
@@ -403,8 +405,9 @@ ORDER BY c.Population DESC NULLS LAST
      gold:      SELECT ci.Name as city_name, ci.Population, co.Name as country_name, co.Continent, 
 co.Region FROM world.City ci JOIN world.Country co ON ci.CountryCode = co.Code WHERE ci.Population >
 2000000
-     llm_category: other
-     llm_reason: Judge error: 'choices'
+     llm_category: wrong_filter
+     llm_reason: The submitted query uses an OR condition in the WHERE clause that includes cities 
+which are capitals, causing additional rows beyond the population filter in the gold query.
 
   14. What is the total amount of performing loans by district name?
      iter=11  dur=166.6s  tools: search_rules → list_schemas → list_tables → describe_table → 
@@ -452,10 +455,10 @@ ORDER BY total_performing_loans DESC
      gold:      SELECT d.A2 as district_name, SUM(l.amount) as total_loan_amount FROM 
 financial.district d JOIN financial.account a ON d.district_id = a.district_id JOIN financial.loan l
 ON a.account_id = l.account_id WHERE l.status = 'A' AND d.district_id != 1 GROUP BY d.A2
-     llm_category: wrong_filter
-     llm_reason: The submitted query includes additional filtering and grouping logic on district_id
-and num_accounts that changes the grouping and excludes or merges districts differently than the 
-gold query, which only filters out district_id = 1 and status = 'A'.
+     llm_category: wrong_groupby
+     llm_reason: The submitted query groups districts into aggregated categories like 'Eastern 
+Region' and 'Other', which differs from the gold query that groups strictly by district name without
+such grouping.
 
   15. List countries by continent with their dominant languages where language percentage exceeds 
 90%, showing whether each language is official.
@@ -470,7 +473,7 @@ FROM world.Country co JOIN world.CountryLanguage cl ON co.Code = cl.CountryCode 
 > 90
      llm_category: wrong_column
      llm_reason: The submitted query omitted the 'cl.Percentage' column from the SELECT clause, 
-causing the result set to differ from the gold query.
+causing a difference in the result set compared to the gold query.
 
   16. Find district names (A2) with fewer than 50 accounts that should be aggregated as 'Other' for 
 reporting, as well as their account counts.
@@ -488,7 +491,7 @@ account_count DESC, d.A2
 financial.district d LEFT JOIN financial.account a ON d.district_id = a.district_id GROUP BY 
 d.district_id, d.A2 HAVING COUNT(a.account_id) < 50
      llm_category: wrong_filter
-     llm_reason: The submitted query includes additional WHERE conditions filtering out certain 
+     llm_reason: The submitted query includes additional WHERE clause filters excluding certain 
 district_ids, which changes the result set compared to the gold query that has no such filters.
 
   17. Identify the top 30 microbreweries with the smallest beer catalogs.
@@ -506,9 +509,10 @@ LIMIT 30
 CraftBeer.beers b ON br.id = b.brewery_id GROUP BY br.id, br.name HAVING COUNT(b.id) < 3 ORDER BY 
 beer_count ASC, br.name LIMIT 30
      llm_category: wrong_filter
-     llm_reason: The gold query does not have a filter on beer count less than 3, but the submitted 
-query uses HAVING COUNT(be.id) < 3, which filters out breweries with 3 or more beers, causing 
-different results.
+     llm_reason: The submitted query uses HAVING COUNT(be.id) < 3 which filters breweries with fewer
+than 3 beers, but the original question asks for the top 30 microbreweries with the smallest beer 
+catalogs without a strict filter on beer count, implying ordering by beer count and limiting to 30, 
+not filtering out breweries with 3 or more beers.
 
   18. Find the top 8 pitchers by WHIP. Show the player's first and last name, the year, the innings 
 pitched, and the WHIP.
@@ -532,9 +536,9 @@ LIMIT 8
 + pi.H) / (pi.IPouts / 3.0) as WHIP FROM lahman_2014.pitching pi JOIN lahman_2014.players p ON 
 pi.playerID = p.playerID WHERE pi.IPouts >= 150 ORDER BY WHIP ASC LIMIT 8
      llm_category: wrong_aggregation
-     llm_reason: The submitted query aggregates pitching stats across multiple records per 
-player-year, while the gold query uses individual records without aggregation, leading to different 
-WHIP calculations.
+     llm_reason: The submitted query aggregates data by player and year, summing IPouts, BB, and H, 
+while the gold query uses individual yearly records without aggregation, leading to different WHIP 
+calculations.
 
   19. Calculate the current headcount by department based on their current department assignment, 
 counting each employee only once based on their most recent department assignment. Be sure to return
@@ -559,8 +563,9 @@ ORDER BY headcount DESC
 JOIN employee.departments d ON de.dept_no = d.dept_no WHERE de.to_date = '9999-01-01' AND de.emp_no 
 NOT IN (SELECT emp_no FROM employee.dept_manager WHERE to_date = '9999-01-01') GROUP BY d.dept_name
      llm_category: wrong_filter
-     llm_reason: The submitted query does not exclude employees who are current managers, unlike the
-gold query which filters out employees present in dept_manager with to_date = '9999-01-01'.
+     llm_reason: The submitted query does not exclude employees who are current department managers,
+unlike the gold query which filters them out using a NOT IN condition on dept_manager with to_date =
+'9999-01-01'.
 
   20. Find the top 30 driver names by fastest lap time.
      iter=19  dur=571.1s  tools: search_rules → list_schemas → list_tables → describe_table → 
@@ -638,9 +643,9 @@ ErgastF1.results r JOIN ErgastF1.constructors c ON r.constructorId = c.construct
 ErgastF1.races ra ON r.raceId = ra.raceId WHERE r.position IS NOT NULL AND r.position > 0 AND 
 ra.year >= 2010 GROUP BY c.constructorId, c.name, ra.year
      llm_category: wrong_column
-     llm_reason: The submitted query uses the constructorResults table and sums cr.points, which may
-have different data or aggregation logic compared to summing r.points from the results table in the 
-gold query.
+     llm_reason: The submitted query sums points from constructorResults which already aggregates 
+points per constructor per race, while the gold query sums points from results which are per driver,
+leading to different total points calculations.
 
   23. Calculate the loan portfolio size by status for each loan classification. Show the loan 
 classification, count, and total amount.
@@ -654,8 +659,8 @@ WHEN status IN ('C', 'D') THEN 'Non-Performing' END as loan_classification, COUN
 SUM(amount) as total_amount FROM financial.loan GROUP BY CASE WHEN status = 'A' THEN 'Performing' 
 WHEN status = 'B' THEN 'Watch List' WHEN status IN ('C', 'D') THEN 'Non-Performing' END
      llm_category: wrong_groupby
-     llm_reason: The submitted query groups by the raw status values instead of the categorized loan
-classifications, leading to different groupings and results.
+     llm_reason: The submitted query groups by the raw status values instead of the loan 
+classification derived from the CASE statement, leading to different groupings and results.
 
   24. Find the top 50 non-reliever pitchers by ERA (Earned Run Average). Show the player's first and
 last name, the year, the innings pitched, and the ERA.
@@ -679,8 +684,8 @@ LIMIT 50
 * 9.0) / (pi.IPouts / 3.0) as ERA FROM lahman_2014.pitching pi JOIN lahman_2014.players p ON 
 pi.playerID = p.playerID WHERE pi.IPouts >= 150 ORDER BY ERA ASC LIMIT 50
      llm_category: wrong_filter
-     llm_reason: The submitted query filters on innings pitched >= 50 instead of the gold query's 
-filter on IPouts >= 150, causing different sets of pitchers to be included.
+     llm_reason: The submitted query uses a filter of innings pitched >= 50 instead of the gold 
+query's filter of IPouts >= 150, leading to different sets of pitchers being selected.
 
   25. Analyze completed flights by day of week for January 2016. Give total flights, on-time 
 flights, and average delay in minutes by day of week.
@@ -705,5 +710,15 @@ THEN 1 ELSE 0 END) as on_time_flights, AVG(ArrDelayMinutes) as avg_delay FROM
 Airline.On_Time_On_Time_Performance_2016_1 WHERE DepTime IS NOT NULL AND ArrTime IS NOT NULL AND 
 Cancelled = 0 AND Month = 1 GROUP BY DayOfWeek
      llm_category: wrong_filter
-     llm_reason: The submitted query does not filter out cancelled flights (Cancelled = 0), which 
-the gold query does, leading to different results.
+     llm_reason: The submitted query does not filter out cancelled flights (Cancelled = 0), causing 
+a mismatch in results compared to the gold query.
+───────────────────────────────────── Retrieval Quality (BM25) ─────────────────────────────────────
+
+ agent search_rules queries  (n=74) 
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Metric                   ┃ Value ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ Zero-result rate         │  0.0% │
+│ Precision@5 (LLM-judged) │ 16.1% │
+└──────────────────────────┴───────┘
+

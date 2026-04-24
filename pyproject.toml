@@ -30,6 +30,7 @@ evaluate = "evaluation.evaluate:main"
 interactive = "interactive:main"
 analyze = "evaluation.analyze:main"
 build-index = "retrieval.build_index:main"
+retry = "evaluation.retry:main"
 
 [tool.ty.environment]
 python-version = "3.13"

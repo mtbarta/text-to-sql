@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -26,6 +27,9 @@ from typing import Any, Protocol, runtime_checkable
 import httpx
 from rich.console import Console
 from rich.table import Table
+
+# Allow imports from project root when run as a script
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -320,6 +324,185 @@ class LLMJudgeAnalyzer:
 
 
 # =============================================================================
+# Retrieval evaluation
+# =============================================================================
+
+
+def _extract_agent_search_queries(events: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Return (query, result_text) pairs for every search_rules call in the event stream.
+
+    Pairs query with its result so the judge receives the actual retrieved text.
+    """
+    pairs: list[tuple[str, str]] = []
+    pending_query: str | None = None
+    for event in events:
+        if (
+            event["type"] == "TOOL_CALL_PARSED"
+            and event["data"].get("name") == "search_rules"
+        ):
+            pending_query = event["data"].get("arguments", {}).get("query", "") or None
+        elif (
+            event["type"] == "TOOL_EXECUTION_END"
+            and event["data"].get("name") == "search_rules"
+            and pending_query is not None
+        ):
+            result = event["data"].get("result", "")
+            pairs.append((pending_query, result))
+            pending_query = None
+    return pairs
+
+
+@dataclass
+class RetrievalReport:
+    total_queries: int
+    zero_result_rate: float
+    zero_result_queries: list[str]
+    precision_at_5: float | None        # None if no non-empty queries
+    judge_errors: int                   # LLM calls that failed
+    first_judge_error: str | None       # first error message, for diagnosis
+
+
+class RetrievalEvaluator:
+    """Evaluate BM25 retrieval quality using LLM relevance judgments.
+
+    Reads search_rules results directly from the trace event stream and asks an
+    LLM to judge each returned chunk as relevant or not to the search query.
+
+    Precision@5 = mean fraction of returned chunks judged relevant across all
+    queries that had at least one result.  Zero-result rate counts queries where
+    BM25 returned nothing at all.
+    """
+
+    _JUDGE_PROMPT = (
+        "You are evaluating a retrieval system for a SQL agent.\n\n"
+        "Search query: {query}\n\n"
+        "Retrieved chunk:\n{chunk}\n\n"
+        "Is this chunk relevant and useful for answering the search query? "
+        "Reply with a single word: yes or no."
+    )
+
+    def __init__(self, api_key: str, model: str) -> None:
+        self._model = model
+        self._client = httpx.Client(
+            timeout=30.0,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+
+    def evaluate(self, traces: list[TraceRecord]) -> RetrievalReport:
+        all_pairs: list[tuple[str, str]] = []
+        for trace in traces:
+            all_pairs.extend(_extract_agent_search_queries(trace.events))
+
+        total = len(all_pairs)
+        if total == 0:
+            return RetrievalReport(0, 0.0, [], None, 0, None)
+
+        zero_result_queries = [q for q, result in all_pairs if self._is_empty(result)]
+        non_empty = [(q, r) for q, r in all_pairs if not self._is_empty(r)]
+
+        if not non_empty:
+            return RetrievalReport(total, 1.0, zero_result_queries, None, 0, None)
+
+        per_query_precision: list[float] = []
+        judge_errors = 0
+        first_judge_error: str | None = None
+
+        for query, result in non_empty:
+            chunks = self._split_chunks(result)
+            judgments: list[int] = []
+            for chunk in chunks:
+                score, error, errmsg = self._judge(query, chunk)
+                judgments.append(score)
+                judge_errors += error
+                if errmsg and first_judge_error is None:
+                    first_judge_error = errmsg
+            precision = sum(judgments) / len(judgments) if judgments else 0.0
+            per_query_precision.append(precision)
+
+        precision_at_5 = sum(per_query_precision) / len(per_query_precision)
+
+        return RetrievalReport(
+            total_queries=total,
+            zero_result_rate=len(zero_result_queries) / total,
+            zero_result_queries=zero_result_queries,
+            precision_at_5=precision_at_5,
+            judge_errors=judge_errors,
+            first_judge_error=first_judge_error,
+        )
+
+    def _is_empty(self, result: str) -> bool:
+        return result.strip() == "No relevant rules found for this query."
+
+    def _split_chunks(self, result: str) -> list[str]:
+        """Split the formatted search_rules result into individual chunk texts."""
+        return [c.strip() for c in result.split("\n\n---\n\n") if c.strip()]
+
+    def _judge(self, query: str, chunk: str) -> tuple[int, int, str | None]:
+        """Return (relevance_score, error_count, error_message) for one chunk."""
+        prompt = self._JUDGE_PROMPT.format(query=query, chunk=chunk[:1500])
+        try:
+            response = self._client.post(
+                OPENROUTER_API_URL,
+                json={
+                    "model": self._model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 16,
+                    "temperature": 0.0,
+                },
+            )
+            response.raise_for_status()
+            answer = response.json()["choices"][0]["message"]["content"].strip().lower()
+            return (1 if answer.startswith("yes") else 0), 0, None
+        except Exception as e:
+            return 0, 1, str(e)
+
+
+def render_retrieval_section(report: RetrievalReport, console: Console) -> None:
+    console.rule("[bold]Retrieval Quality (BM25)[/bold]")
+    console.print()
+
+    if report.judge_errors:
+        console.print(
+            f"  [yellow]Warning: {report.judge_errors} LLM judge call(s) failed "
+            f"— precision may be understated.[/yellow]"
+        )
+        if report.first_judge_error:
+            console.print(f"  [yellow]First error: {report.first_judge_error}[/yellow]")
+        console.print()
+
+    table = Table(
+        title=f"agent search_rules queries  (n={report.total_queries})",
+        show_header=True,
+        header_style="bold",
+    )
+    table.add_column("Metric")
+    table.add_column("Value", justify="right")
+
+    def _pct_lower_better(v: float) -> str:
+        color = "green" if v == 0.0 else "yellow" if v <= 0.1 else "red"
+        return f"[{color}]{v:.1%}[/{color}]"
+
+    def _pct_higher_better(v: float) -> str:
+        color = "green" if v >= 0.8 else "yellow" if v >= 0.5 else "red"
+        return f"[{color}]{v:.1%}[/{color}]"
+
+    table.add_row("Zero-result rate", _pct_lower_better(report.zero_result_rate))
+    if report.precision_at_5 is not None:
+        table.add_row("Precision@5 (LLM-judged)", _pct_higher_better(report.precision_at_5))
+    console.print(table)
+
+    if report.zero_result_queries:
+        console.print(f"\n  [yellow]Zero-result queries ({len(report.zero_result_queries)}):[/yellow]")
+        for q in report.zero_result_queries:
+            console.print(f"    [dim]{q!r}[/dim]")
+
+    console.print()
+
+
+# =============================================================================
 # Report rendering
 # =============================================================================
 
@@ -468,7 +651,8 @@ def parse_args() -> argparse.Namespace:
             "Examples:\n"
             "  uv run analyze logs/run_20260420_123456/\n"
             "  uv run analyze logs/run_20260420_123456/ --show-queries\n"
-            "  uv run analyze logs/run_20260420_123456/ --llm-judge --api-key KEY"
+            "  uv run analyze logs/run_20260420_123456/ --llm-judge --api-key KEY\n"
+            "  uv run analyze logs/run_20260420_123456/ --retrieval-eval"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -502,6 +686,15 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("experiment_analysis"),
         help="Directory to save the analysis report (default: experiment_analysis/).",
+    )
+    parser.add_argument(
+        "--retrieval-eval",
+        action="store_true",
+        help=(
+            "Evaluate BM25 retrieval quality. Reports precision@5, recall@1/3/5, "
+            "MRR, and zero-result rate — both for the agent's actual search_rules "
+            "queries and for using the full prompt as the query (oracle)."
+        ),
     )
     return parser.parse_args()
 
@@ -551,6 +744,19 @@ def main() -> None:
 
     render_report(analyses, console, show_queries=args.show_queries)
 
+    retrieval_report: RetrievalReport | None = None
+    if args.retrieval_eval:
+        if not args.api_key:
+            console.print("[red]--api-key is required when --retrieval-eval is set.[/red]")
+            raise SystemExit(1)
+        try:
+            evaluator = RetrievalEvaluator(api_key=args.api_key, model=args.judge_model)
+            console.print(f"[dim]Retrieval eval: judging search_rules calls across {len(traces)} traces[/dim]")
+            retrieval_report = evaluator.evaluate(traces)
+            render_retrieval_section(retrieval_report, console)
+        except ImportError as e:
+            console.print(f"[yellow]Retrieval eval skipped: {e}[/yellow]")
+
     # Derive the run name: if log_dir is a split subdir (e.g. .../run_XYZ/evals_easy),
     # name the file after the run directory; otherwise use log_dir itself.
     parent = log_dir.parent
@@ -562,6 +768,8 @@ def main() -> None:
     with open(output_path, "w") as f:
         file_console = Console(file=f, no_color=True, highlight=False, width=100)
         render_report(analyses, file_console, show_queries=True)
+        if retrieval_report is not None:
+            render_retrieval_section(retrieval_report, file_console)
     console.print(f"[dim]Report saved to: {output_path}[/dim]")
 
 
